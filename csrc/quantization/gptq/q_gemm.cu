@@ -19,6 +19,9 @@ https://github.com/qwopqwop200/GPTQ-for-LLaMa
 #include "qdq_4.cuh"
 #include "qdq_8.cuh"
 
+#include "cutlass_gptq_gemm.cuh"
+#include "../fp4/nvfp4_utils.cuh"
+#include "dispatch_utils.h"
 namespace vllm {
 namespace gptq {
 
@@ -1836,6 +1839,36 @@ torch::Tensor gptq_gemm(torch::Tensor a, torch::Tensor b_q_weight,
       use_exllama, bit);
   return c;
 }
+
+
+torch::Tensor gptq_gemm_opt(torch::Tensor a, torch::Tensor b_q_weight,
+                        torch::Tensor b_gptq_qzeros,
+                        torch::Tensor b_gptq_scales, torch::Tensor b_g_idx,
+                        bool use_exllama, int64_t bit) {
+  const at::cuda::OptionalCUDAGuard device_guard(device_of(a));
+  auto options = torch::TensorOptions().dtype(a.dtype()).device(a.device());
+  at::Tensor c = torch::empty({a.size(0), b_q_weight.size(1)}, options);
+  at::Tensor temp_dq = torch::empty(
+      {b_q_weight.size(0) * 32 / bit, b_q_weight.size(1)}, options);
+
+
+  VLLM_DISPATCH_HALF_TYPES(
+      a.scalar_type(), "gptq_gemm_opt", [&] {
+        using cuda_type = vllm::CUDATypeConverter<scalar_t>::Type;
+        cutlass_gptq::run_cutlass_gptq_gemm<cuda_type>(
+          (const cuda_type*) a.data_ptr(),
+          (const uint32_t*) b_q_weight.data_ptr(),
+          (const uint32_t*) b_gptq_qzeros.data_ptr(),
+          (const cuda_type*) b_gptq_scales.data_ptr(),
+          b_g_idx.device().is_meta() ? NULL : (const int*)b_g_idx.data_ptr(),
+          (cuda_type*) c.data_ptr(), (cuda_type*) temp_dq.data_ptr(),
+          c.size(0), c.size(1), a.size(1),
+          b_gptq_qzeros.size(0), use_exllama, bit);
+      });
+
+  return c;
+}
+
 
 void gptq_shuffle(torch::Tensor q_weight, torch::Tensor q_perm, int64_t bit) {
   const at::cuda::OptionalCUDAGuard device_guard(device_of(q_weight));
