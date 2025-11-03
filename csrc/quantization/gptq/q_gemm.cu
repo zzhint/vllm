@@ -28,7 +28,8 @@ namespace gptq {
 #define BLOCK_KN_SIZE 128
 #define BLOCK_M_SIZE_MAX 8
 #define MAX_GROUPS_IN_BLOCK (BLOCK_KN_SIZE / 32)
-#define MAX_Q_GEMM_ROWS 50
+//#define MAX_Q_GEMM_ROWS 50
+#define MAX_Q_GEMM_ROWS 0
 #define MAX_Q_GEMM_ROWS_8BIT 24
 #define MAX_ALT_GEMM_ROWS 8
 #define THREADS_X 32
@@ -1482,6 +1483,38 @@ void reconstruct_gptq(const uint32_t* b_q_weight, const uint32_t* b_gptq_qzeros,
                                            width, groups, out);
 }
 
+void print_dp(half* temp_dq, int size_k, int size_n) {
+  half* h_data = new half[size_k * size_n];
+  cudaMemcpy(h_data, temp_dq, size_k * size_n * sizeof(half), cudaMemcpyDeviceToHost);
+
+  printf("K N \n");
+  for(int i=0; i<size_k; i++) {
+    for(int j=0; j<size_n;j++) {
+      half val = h_data[i*size_n +j];
+      float val_float = static_cast<float>(val);
+      printf("%.2f\t", val_float);
+    }
+    printf("\n");
+  }
+  printf("\n");
+
+  printf("N K \n");
+  for(int i=0; i<size_n; i++) {
+    for(int j=0; j<size_k;j++ ) {
+      half val = h_data[i +j*size_n];
+      float val_float = static_cast<float>(val);
+      printf("%.2f\t", val_float);
+    }
+    printf("\n");
+  }
+  printf("\n");
+
+
+  delete[] h_data;
+
+
+}
+
 void gemm_half_q_half_cuda(cublasHandle_t cublas_handle, const half* a,
                            const uint32_t* b_q_weight,
                            const uint32_t* b_gptq_qzeros,
@@ -1502,6 +1535,7 @@ void gemm_half_q_half_cuda(cublasHandle_t cublas_handle, const half* a,
     if (use_exllama) {
       reconstruct_exllama(b_q_weight, b_gptq_qzeros, b_gptq_scales, b_g_idx,
                           temp_dq, size_k, size_n, groups, bit);
+      print_dp(temp_dq, size_k, size_n);
     } else {
       reconstruct_gptq(b_q_weight, b_gptq_qzeros, b_gptq_scales, b_g_idx,
                        temp_dq, size_k, size_n, groups, bit);

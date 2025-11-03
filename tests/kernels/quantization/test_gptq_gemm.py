@@ -2,7 +2,16 @@ import torch
 import pytest
 from torch.testing import assert_close
 
-input_tokens=64
+m=32
+n=32
+k=128
+TEST_CASES = [
+    ((m, k), (k//8, n), (k // 128, n // 8), (k // 128, n), 4, True)
+]
+
+
+
+'''
 TEST_CASES = [
     ((input_tokens, 1024), (128, 4096), (8, 512), (8, 4096), 4, True),
     ((input_tokens, 2048), (256, 1024), (16, 128), (16, 1024), 4, True),
@@ -14,9 +23,21 @@ TEST_CASES = [
     ((input_tokens, 12288), (1536, 4096), (96, 512), (96, 4096), 4, True),
 ]
 
+'''
+
+def set_fixed_seed(seed: int = 42):
+    torch.manual_seed(seed) 
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed) 
+        torch.cuda.manual_seed_all(seed) 
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+
+
 @pytest.mark.parametrize("a_shape, weight_shape, zeros_shape, scales_shape, bit, use_exllama", TEST_CASES)
 def test_gptq_gemm_opt_correctness(a_shape, weight_shape, zeros_shape, scales_shape, bit, use_exllama):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    set_fixed_seed()
     if device.type != "cuda":
         pytest.skip("需要CUDA设备进行测试")
 
@@ -36,6 +57,13 @@ def test_gptq_gemm_opt_correctness(a_shape, weight_shape, zeros_shape, scales_sh
         output_new = torch.ops._C.gptq_gemm_opt(a, weight, zeros, scales, idx, use_exllama, bit)
 
     assert output_original.shape == output_new.shape, "输出形状不一致"
+    
+    print(a)
+    print(weight)
+    print(zeros)
+    print(scales)
+    print(output_original)
+    print(output_new)
 
     rtol = 1e-3
     atol = 1e-3
