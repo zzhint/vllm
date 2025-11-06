@@ -1535,7 +1535,7 @@ void gemm_half_q_half_cuda(cublasHandle_t cublas_handle, const half* a,
     if (use_exllama) {
       reconstruct_exllama(b_q_weight, b_gptq_qzeros, b_gptq_scales, b_g_idx,
                           temp_dq, size_k, size_n, groups, bit);
-      print_dp(temp_dq, size_k, size_n);
+      //print_dp(temp_dq, size_k, size_n);
     } else {
       reconstruct_gptq(b_q_weight, b_gptq_qzeros, b_gptq_scales, b_g_idx,
                        temp_dq, size_k, size_n, groups, bit);
@@ -1882,22 +1882,42 @@ torch::Tensor gptq_gemm_opt(torch::Tensor a, torch::Tensor b_q_weight,
   const at::cuda::OptionalCUDAGuard device_guard(device_of(a));
   auto options = torch::TensorOptions().dtype(a.dtype()).device(a.device());
   at::Tensor c = torch::empty({a.size(0), b_q_weight.size(1)}, options);
-  at::Tensor temp_dq = torch::empty(
-      {b_q_weight.size(0) * 32 / bit, b_q_weight.size(1)}, options);
 
+  int device_id = a.device().index();
+  cudaDeviceProp prop;
+  cudaGetDeviceProperties(&prop, device_id);
+  int sm_count = prop.multiProcessorCount;
+  int smem_size = prop.sharedMemPerBlock;
+  int group_size = a.size(1) / b_gptq_qzeros.size(0);
+
+  int split_k_slices = 4;
+  using accscalar_t = float;
+  //just need contiguous
+  at::Tensor temp_for_reduce_c = torch::empty(
+          {a.size(0) * b_q_weight.size(1) *split_k_slices}, 
+          options.dtype(torch::kFloat32));
 
   VLLM_DISPATCH_HALF_TYPES(
       a.scalar_type(), "gptq_gemm_opt", [&] {
         using cuda_type = vllm::CUDATypeConverter<scalar_t>::Type;
-        cutlass_gptq::run_cutlass_gptq_gemm<cuda_type>(
-          (const cuda_type*) a.data_ptr(),
-          (const uint32_t*) b_q_weight.data_ptr(),
-          (const uint32_t*) b_gptq_qzeros.data_ptr(),
-          (const cuda_type*) b_gptq_scales.data_ptr(),
-          b_g_idx.device().is_meta() ? NULL : (const int*)b_g_idx.data_ptr(),
-          (cuda_type*) c.data_ptr(), (cuda_type*) temp_dq.data_ptr(),
-          c.size(0), c.size(1), a.size(1),
-          b_gptq_qzeros.size(0), use_exllama, bit);
+        using GptQ_Kernel_Params_T = cutlass_gptq::GptQ_Kernel_Params<cuda_type, accscalar_t>;
+        GptQ_Kernel_Params_T kernel_params;
+        kernel_params.A_ptr = (const cuda_type*) a.data_ptr();
+        kernel_params.B_q_ptr = (const uint32_t*) b_q_weight.data_ptr();
+        kernel_params.B_zeros_ptr = (const uint32_t*) b_gptq_qzeros.data_ptr();
+        kernel_params.B_scales_ptr = (const cuda_type*) b_gptq_scales.data_ptr();
+        kernel_params.B_g_idx_ptr = b_g_idx.device().is_meta() ? NULL : (const int*)b_g_idx.data_ptr();
+        kernel_params.C_ptr = (cuda_type*) c.data_ptr();
+        kernel_params.C_reduce_ptr = (accscalar_t* ) temp_for_reduce_c.data_ptr();
+        kernel_params.M = c.size(0);
+        kernel_params.N = c.size(1);
+        kernel_params.K = a.size(1);
+        kernel_params.split_k_slices = split_k_slices;
+        kernel_params.bit = bit;
+        kernel_params.group_size = group_size;
+        kernel_params.use_exllama = use_exllama;
+
+        cutlass_gptq::run_cutlass_gptq_gemm<cuda_type, accscalar_t>(kernel_params);
       });
 
   return c;

@@ -77,5 +77,5 @@ def benchmark_gptq_gemm(
 
 if __name__ == "__main__":
     for case in TEST_CASES:
-        benchmark_gptq_gemm(*case, use_cuda_graph=True)
+        benchmark_gptq_gemm(*case, use_cuda_graph=False)
     print("\nBenchmark completed!")

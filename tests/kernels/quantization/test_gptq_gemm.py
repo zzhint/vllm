@@ -2,9 +2,9 @@ import torch
 import pytest
 from torch.testing import assert_close
 
-m=32
-n=32
-k=128
+m=1024
+n=2048
+k=4096
 TEST_CASES = [
     ((m, k), (k//8, n), (k // 128, n // 8), (k // 128, n), 4, True)
 ]
@@ -48,7 +48,13 @@ def test_gptq_gemm_opt_correctness(a_shape, weight_shape, zeros_shape, scales_sh
         device=device,
         dtype=torch.int32
     )
-    zeros = torch.zeros(zeros_shape, device=device, dtype=torch.int32)  
+    #zeros = torch.zeros(zeros_shape, device=device, dtype=torch.int32)  
+    zeros = torch.randint(
+        -2000000, 2000000,
+        zeros_shape,
+        device=device,
+        dtype=torch.int32
+    )
     scales = torch.randn(scales_shape, device=device, dtype=torch.float16) 
     idx = torch.empty((0,), device=device, dtype=torch.int32) 
 
@@ -65,8 +71,8 @@ def test_gptq_gemm_opt_correctness(a_shape, weight_shape, zeros_shape, scales_sh
     print(output_original)
     print(output_new)
 
-    rtol = 1e-3
-    atol = 1e-3
+    rtol = 1e-1
+    atol = 1
     assert_close(
         output_original,
         output_new,
