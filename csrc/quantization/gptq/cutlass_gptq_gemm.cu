@@ -19,13 +19,197 @@
                 for(int j=0; j<size<1>(sB_T); j++) {
                     scalar_t val = sB_T(i,j);
                     float val_float = static_cast<float>(val);
-                    printf("%.2f\t", val_float);
+                    printf("%.4f\t", val_float);
                 }
                 printf("\n");
             }
 
         }
 
+        if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0  && threadIdx.x == 0 && idx_group == 0 && idx_bK == 0) {
+                
+                print("mA\n");
+                print(mA);
+                print("\n");
+
+                print("mB_q_T\n");
+                print(mB_q_T);
+                print("\n");
+                print("mC\n");
+                print(mC);
+                print("\n");
+                print("mB_zeros\n");
+                print(mB_zeros);
+                print("\n");
+                print("mB_scales\n");
+                print(mB_scales);
+                print("\n");
+                print("gA\n");
+                print(gA);
+                print("\n");
+                print("gB_q_T\n");
+                print(gB_q_T);
+                print("\n");
+                print("gB_zeros\n");
+                print(gB_zeros);
+                print("\n");
+                print("gB_scales\n");
+                print(gB_scales);
+                print("\n");
+                print("gC\n");
+                print(gC);
+                print("\n");
+                print("sA\n");
+                print(sA);
+                print("\n");
+                print("sB_T\n");
+                print(sB_T);
+                print("\n");
+                print("sB_q_T\n");
+                print(sB_q_T);
+                print("\n");
+                print("sB_zeros\n");
+                print(sB_zeros);
+                print("\n");
+                print("sB_scales\n");
+                print(sB_scales);
+                print("\n");
+
+                print("tA_this_group_gA_bK_g2s_copy\n");
+                print(tA_this_group_gA_bK_g2s_copy);
+                print("\n");
+                print("tAsA_g2s_copy\n");
+                print(tAsA_g2s_copy);
+                print("\n");
+                print("tB_this_group_gB_q_T_bK_g2s_copy\n");
+                print(tB_this_group_gB_q_T_bK_g2s_copy);
+                print("\n");
+                print("tBsB_q_T_g2s_copy\n");
+                print(tBsB_q_T_g2s_copy);
+                print("\n");
+                print("tCsA_mma\n");
+                print(tCsA_mma);
+                print("\n");
+                print("tCsB_mma\n");
+                print(tCsB_mma);
+                print("\n");
+                print("tCgC_mma\n");
+                print(tCgC_mma);
+                print("\n");
+                print("tCrA_mma\n");
+                print(tCrA_mma);
+                print("\n");
+                print("tCrB_mma\n");
+                print(tCrB_mma);
+                print("\n");
+                print("tCrC_mma\n");
+                print(tCrC_mma);
+                print("\n");
+                print("this_group_gA\n");
+                print(this_group_gA);
+                print("\n");
+                print("this_group_gB_q_T\n");
+                print(this_group_gB_q_T);
+                print("\n");
+                print("this_group_gB_zeros\n");
+                print(this_group_gB_zeros);
+                print("\n");
+                print("this_group_gB_scales\n");
+                print(this_group_gB_scales);
+                print("\n");
+                print("this_group_gA_bK_div\n");
+                print(this_group_gA_bK_div);
+                print("\n");
+                print("this_group_gB_q_T_bK_div\n");
+                print(this_group_gB_q_T_bK_div);
+                print("\n");
+                print("tBqTsBqT_s2r_copy\n");
+                print(tBqTsBqT_s2r_copy);
+                print("\n");
+                print("tBqTrBqT_s2r_copy\n");
+                print(tBqTrBqT_s2r_copy);
+                print("\n");
+                print("tBTsBT_r2s_copy\n");
+                print(tBTsBT_r2s_copy);
+                print("\n");
+                print("tBTrBT_r2s_copy\n");
+                print(tBTrBT_r2s_copy);
+                print("\n");
+
+                
+                }
+            if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 0 && idx_bK == 0) {
+                printf("sB_T \n");
+                for(int i = 0; i<size<0>(sB_T); i++) {
+                    for(int j=0; j<size<1>(sB_T); j++) {
+                        scalar_t val = sB_T(i,j);
+                        float val_float = static_cast<float>(val);
+                        printf("%.4f\t", val_float);
+                    }
+                    printf("\n");
+                }
+                printf("\n");
+                printf("sB_T end\n");
+
+                printf("sA \n");
+                for(int i = 0; i<size<0>(sA); i++) {
+                    for(int j=0; j<size<1>(sA); j++) {
+                        scalar_t val = sA(i,j);
+                        float val_float = static_cast<float>(val);
+                        printf("%.4f\t", val_float);
+                    }
+                    printf("\n");
+                }
+                printf("\n");
+                printf("sA end\n");
+            }
+            __syncthreads();
+
+            if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 0 && idx_bK == 0) {
+                printf("sA load\n");
+                for(int i = 0; i<size<0>(sA); i++) {
+                    for(int j=0; j<size<1>(sA); j++) {
+                        scalar_t val = sA(i,j);
+                        float val_float = static_cast<float>(val);
+                        printf("%.4f\t", val_float);
+                    }
+                    printf("\n");
+                }
+                printf("\n");
+                printf("sA end\n");
+
+                print("tiled_g2s_copy_A\n");
+                print(tiled_g2s_copy_A);
+                print("\n");
+
+                print("tiled_g2s_copy_B_q_T \n");
+                print(tiled_g2s_copy_B_q_T);
+                print("\n");
+                
+
+            }
+            __syncthreads();
+
+                if(blockIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0 && threadIdx.x == 0) {
+        printf("gC \n");
+        for(int i = 0; i<size<0>(gC); i++) {
+            for(int j=0; j<size<1>(gC); j++) {
+                scalar_t val = gC(i,j);
+                float val_float = static_cast<float>(val);
+                printf("%.4f\t", val_float);
+            }
+            printf("\n");
+        }
+        printf("\n");
+        printf("gC_reduce \n");
+        for(int i = 0; i<size<0>(gC_reduce); i++) {
+            for(int j=0; j<size<1>(gC_reduce); j++) {
+                scalar_t val = gC_reduce(i,j);
+                float val_float = static_cast<float>(val);
+                printf("%.4f\t", val_float);
+            }
+            printf("\n");
+        }
 */
 
 
@@ -134,7 +318,7 @@ __global__ void __launch_bounds__(GEMM_CONGIG::threads) cutlass_gptq_gemm_kernel
     Tensor mB_zeros = make_tensor(make_gmem_ptr(kernel_params.B_zeros_ptr), 
         make_shape(N / q_div, K / group_size), make_stride(Int<1>{}, N / q_div));
     Tensor mB_scales = make_tensor(make_gmem_ptr(kernel_params.B_scales_ptr),
-        make_shape(N, K / group_size), make_stride(Int<1>{}, M));
+        make_shape(N, K / group_size), make_stride(Int<1>{}, N));
     Tensor mC = make_tensor(make_gmem_ptr(kernel_params.C_ptr), make_shape(M, N), make_stride(N, Int<1>{}));
     Tensor mC_reduce = make_tensor(make_gmem_ptr(kernel_params.C_reduce_ptr), 
         make_shape(M, N, split_k_slices), make_stride(N, Int<1>{}, M*N));
@@ -203,7 +387,7 @@ __global__ void __launch_bounds__(GEMM_CONGIG::threads) cutlass_gptq_gemm_kernel
             int bit_offset = (idx_n_thread % q_div) * bit;
             zeros_val_q = (zeros_val_q >> bit_offset) & bit_mask;
             sB_zeros(idx_n_thread, 0) = zeros_val_q + 1;
-        }    
+        }
         __syncthreads();
 
         Tensor this_group_gA_bK_div = local_tile(this_group_gA, make_tile(Int<bM>{}, Int<bK>{}), make_coord(0, _));
@@ -219,18 +403,19 @@ __global__ void __launch_bounds__(GEMM_CONGIG::threads) cutlass_gptq_gemm_kernel
             cute::copy(tiled_g2s_copy_B_q_T, tB_this_group_gB_q_T_bK_g2s_copy(_,_,_, idx_bK), tBsB_q_T_g2s_copy);
             __syncthreads();
 
-            int n_dq_N_repeat = size<1>(tBqTsBqT_s2r_copy);
-            for(int idx_dq_N_repeat = 0; idx_dq_N_repeat < n_dq_N_repeat; idx_dq_N_repeat++) {
-                cute::copy(tiled_s2r_dq_copy, tBqTsBqT_s2r_copy(_,idx_dq_N_repeat,0), tBqTrBqT_s2r_copy);
-                int idx_N_thread = get<0>(tBTidsBT_r2s_copy(0, idx_dq_N_repeat, 0));
-                uint32_t zero_thread = sB_zeros(idx_N_thread,0);
-                scalar_t scale_thread = sB_scales(idx_N_thread, 0);
-                dq_thread_fn<scalar_t, B_q_dq_layout, bit, q_div, bit_mask>(
-                    tBqTrBqT_s2r_copy, tBTrBT_r2s_copy, zero_thread, scale_thread);
-                cute::copy(tiled_r2s_dq_copy, tBTrBT_r2s_copy, tBTsBT_r2s_copy(_,idx_dq_N_repeat,0));
+            for(int idx_dq_N = 0; idx_dq_N < size<1>(tBqTsBqT_s2r_copy); idx_dq_N++) {
+                for(int idx_dq_K = 0; idx_dq_K < size<2>(tBqTsBqT_s2r_copy); idx_dq_K++) {
+                    cute::copy(tiled_s2r_dq_copy, tBqTsBqT_s2r_copy(_, idx_dq_N, idx_dq_K), tBqTrBqT_s2r_copy);
+                    int idx_N_thread = get<0>(tBTidsBT_r2s_copy(0, idx_dq_N, idx_dq_K));
+                    uint32_t zero_thread = sB_zeros(idx_N_thread,0);
+                    scalar_t scale_thread = sB_scales(idx_N_thread, 0);
+                    dq_thread_fn<scalar_t, B_q_dq_layout, bit, q_div, bit_mask>(
+                        tBqTrBqT_s2r_copy, tBTrBT_r2s_copy, zero_thread, scale_thread);
+                    cute::copy(tiled_r2s_dq_copy, tBTrBT_r2s_copy, tBTsBT_r2s_copy(_, idx_dq_N, idx_dq_K));
+                }
+
             }
             __syncthreads();
-
             cute::copy(tCsA_mma, tCrA_mma);
             cute::copy(tCsB_mma, tCrB_mma);
             cute::gemm(tiled_mma, tCrC_mma, tCrA_mma, tCrB_mma, tCrC_mma);
@@ -241,137 +426,28 @@ __global__ void __launch_bounds__(GEMM_CONGIG::threads) cutlass_gptq_gemm_kernel
     } else {
         cute::copy(tCrC_mma, tCgC_reduce_mma);
     }
-    
-    
+
+
+
 }
-
-    /*
     
-if(blockIdx.x == 0 && blockIdx.y == 0 && threadIdx.x == 0 && idx_group == 0 && idx_bK == 0) {
-                
-                print("mA\n");
-                print(mA);
-                print("\n");
-                print("mB_q\n");
-                print(mB_q);
-                print("\n");
-                print("mB_q_T\n");
-                print(mB_q_T);
-                print("\n");
-                print("mC\n");
-                print(mC);
-                print("\n");
-                print("mB_zeros\n");
-                print(mB_zeros);
-                print("\n");
-                print("mB_scales\n");
-                print(mB_scales);
-                print("\n");
-                print("gA\n");
-                print(gA);
-                print("\n");
-                print("gB_q_T\n");
-                print(gB_q_T);
-                print("\n");
-                print("gB_zeros\n");
-                print(gB_zeros);
-                print("\n");
-                print("gB_scales\n");
-                print(gB_scales);
-                print("\n");
-                print("gC\n");
-                print(gC);
-                print("\n");
-                print("sA\n");
-                print(sA);
-                print("\n");
-                print("sB_T\n");
-                print(sB_T);
-                print("\n");
-                print("sB_q_T\n");
-                print(sB_q_T);
-                print("\n");
-                print("sB_zeros\n");
-                print(sB_zeros);
-                print("\n");
-                print("sB_scales\n");
-                print(sB_scales);
-                print("\n");
+    
 
-                print("tA_this_group_gA_bK_g2s_copy\n");
-                print(tA_this_group_gA_bK_g2s_copy);
-                print("\n");
-                print("tAsA_g2s_copy\n");
-                print(tAsA_g2s_copy);
-                print("\n");
-                print("tB_this_group_gB_q_T_bK_g2s_copy\n");
-                print(tB_this_group_gB_q_T_bK_g2s_copy);
-                print("\n");
-                print("tBsB_q_T_g2s_copy\n");
-                print(tBsB_q_T_g2s_copy);
-                print("\n");
-                print("tCsA_mma\n");
-                print(tCsA_mma);
-                print("\n");
-                print("tCsB_mma\n");
-                print(tCsB_mma);
-                print("\n");
-                print("tCgC_mma\n");
-                print(tCgC_mma);
-                print("\n");
-                print("tCrA_mma\n");
-                print(tCrA_mma);
-                print("\n");
-                print("tCrB_mma\n");
-                print(tCrB_mma);
-                print("\n");
-                print("tCrC_mma\n");
-                print(tCrC_mma);
-                print("\n");
-                print("this_group_gA\n");
-                print(this_group_gA);
-                print("\n");
-                print("this_group_gB_q_T\n");
-                print(this_group_gB_q_T);
-                print("\n");
-                print("this_group_gB_zeros\n");
-                print(this_group_gB_zeros);
-                print("\n");
-                print("this_group_gB_scales\n");
-                print(this_group_gB_scales);
-                print("\n");
-                print("this_group_gA_bK_div\n");
-                print(this_group_gA_bK_div);
-                print("\n");
-                print("this_group_gB_q_T_bK_div\n");
-                print(this_group_gB_q_T_bK_div);
-                print("\n");
-                print("tBqTsBqT_s2r_copy\n");
-                print(tBqTsBqT_s2r_copy);
-                print("\n");
-                print("tBqTrBqT_s2r_copy\n");
-                print(tBqTrBqT_s2r_copy);
-                print("\n");
-                print("tBTsBT_r2s_copy\n");
-                print(tBTsBT_r2s_copy);
-                print("\n");
-                print("tBTrBT_r2s_copy\n");
-                print(tBTrBT_r2s_copy);
-                print("\n");
-
-                
-                }
- */
 
 
 template<typename GEMM_CONGIG, typename GptQ_Kernel_Params_T>
 __global__ void __launch_bounds__(GEMM_CONGIG::reduce_threads) cutlass_gptq_reduce_kernel(
     GptQ_Kernel_Params_T kernel_params) {
 
+    using scalar_t = typename GEMM_CONGIG::scalar_t;
+    using accscalar_t = typename GEMM_CONGIG::accscalar_t;
     using ReduceG2RCopyCReduce = typename GEMM_CONGIG::ReduceG2RCopyCReduce;
     using ReduceR2GCopyC = typename GEMM_CONGIG::ReduceR2GCopyC;
+    
     constexpr int bM = GEMM_CONGIG::bM;
     constexpr int bN = GEMM_CONGIG::bN;
+
+    constexpr int vec_accscalar_t_copy = GEMM_CONGIG::vec_accscalar_t_copy;
 
     int M = kernel_params.M;
     int N = kernel_params.N;
@@ -386,21 +462,38 @@ __global__ void __launch_bounds__(GEMM_CONGIG::reduce_threads) cutlass_gptq_redu
 
     Tensor gC = local_tile(mC, make_tile(Int<bM>{}, Int<bN>{}), make_coord(block_idx_x, block_idx_y));
     Tensor gC_reduce = local_tile(mC_reduce, make_tile(Int<bM>{}, Int<bN>{}), make_coord(block_idx_x, block_idx_y));
-        
-    if(blockIdx.x == 0 && blockIdx.y == 0 && threadIdx.x == 0 ) {              
-        print("mC\n");
-        print(mC);
-        print("\n");
-        print("mC_reduce\n");
-        print(mC_reduce);
-        print("\n");
-        print("gC\n");
-        print(gC);
-        print("\n");
-        print("gC_reduce\n");
-        print(gC_reduce);
-        print("\n");
     
+    ReduceR2GCopyC tiled_reduce_r2g_copy_c;
+    ThrCopy thr_reduce_r2g_copy_c = tiled_reduce_r2g_copy_c.get_slice(threadIdx.x);
+    Tensor tCgC_g2r_copy = thr_reduce_r2g_copy_c.partition_S(gC);
+    Tensor tCrC_g2r_copy = make_fragment_like(tCgC_g2r_copy);
+
+    ReduceG2RCopyCReduce tiled_reduce_g2r_copy_c_reduce;
+    ThrCopy thr_reduce_g2r_copy_c_reduce = tiled_reduce_g2r_copy_c_reduce.get_slice(threadIdx.x);
+    Tensor tCreducegCreduce_g2r_copy = thr_reduce_g2r_copy_c_reduce.partition_S(gC_reduce);
+    Tensor tCreducerCreduce_g2r_copy = make_fragment_like(tCreducegCreduce_g2r_copy(_,_,_,0));
+    Tensor tCreducerCreduce_g2r_copy_temp_acc = make_fragment_like(tCreducerCreduce_g2r_copy);
+    clear(tCreducerCreduce_g2r_copy_temp_acc);
+
+    for(int idx_M_thread = 0; idx_M_thread < size<1>(tCgC_g2r_copy); idx_M_thread++) {
+        for(int idx_N_thread = 0; idx_N_thread < size<2>(tCgC_g2r_copy); idx_N_thread++) {
+            for(int idx_split_k = 0; idx_split_k < split_k_slices; idx_split_k++) {
+                cute::copy(tiled_reduce_g2r_copy_c_reduce, 
+                    tCreducegCreduce_g2r_copy(_, idx_M_thread, idx_N_thread, idx_split_k), 
+                    tCreducerCreduce_g2r_copy(_, idx_M_thread, idx_N_thread));
+                for(int idx_vec = 0; idx_vec < vec_accscalar_t_copy; idx_vec++) {
+                    tCreducerCreduce_g2r_copy_temp_acc(idx_vec, idx_M_thread, idx_N_thread) 
+                        += tCreducerCreduce_g2r_copy(idx_vec, idx_M_thread, idx_N_thread);
+                }
+            }
+            for(int idx_vec = 0; idx_vec < vec_accscalar_t_copy; idx_vec++) {
+                tCrC_g2r_copy(idx_vec, idx_M_thread, idx_N_thread) 
+                    = static_cast<scalar_t>(tCreducerCreduce_g2r_copy_temp_acc(idx_vec, idx_M_thread, idx_N_thread));
+            }
+            cute::copy(tiled_reduce_r2g_copy_c, 
+            tCrC_g2r_copy(_, idx_M_thread, idx_N_thread), 
+            tCgC_g2r_copy(_, idx_M_thread, idx_N_thread));
+        }
     }
 }
 
@@ -439,7 +532,7 @@ void launch_cutlass_gptq_reduce_kernel(
 
 template<typename scalar_t, typename accscalar_t>
 void run_cutlass_gptq_gemm(GptQ_Kernel_Params<scalar_t, accscalar_t> kernel_params) {
-    using TEST_GEMM_CONGIG = GPTQ_GemmConfig<scalar_t, accscalar_t, 64, 64, 32, 1, 4, 128>;
+    using TEST_GEMM_CONGIG = GPTQ_GemmConfig<scalar_t, accscalar_t, 64, 128, 32, 1, 4, 128>;
     launch_cutlass_gptq_gemm_kernel<TEST_GEMM_CONGIG>(kernel_params);
     launch_cutlass_gptq_reduce_kernel<TEST_GEMM_CONGIG>(kernel_params);
 }

@@ -2,16 +2,19 @@ import torch
 import pytest
 from torch.testing import assert_close
 
-m=1024
-n=2048
-k=4096
+m=128
+n=64
+k=128
 TEST_CASES = [
     ((m, k), (k//8, n), (k // 128, n // 8), (k // 128, n), 4, True)
 ]
 
-
-
 '''
+
+
+
+input_tokens = 1024
+
 TEST_CASES = [
     ((input_tokens, 1024), (128, 4096), (8, 512), (8, 4096), 4, True),
     ((input_tokens, 2048), (256, 1024), (16, 128), (16, 1024), 4, True),
@@ -22,7 +25,6 @@ TEST_CASES = [
     ((input_tokens, 4096), (512, 24576), (32, 3072), (32, 24576), 4, True),
     ((input_tokens, 12288), (1536, 4096), (96, 512), (96, 4096), 4, True),
 ]
-
 '''
 
 def set_fixed_seed(seed: int = 42):
@@ -38,6 +40,7 @@ def set_fixed_seed(seed: int = 42):
 def test_gptq_gemm_opt_correctness(a_shape, weight_shape, zeros_shape, scales_shape, bit, use_exllama):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     set_fixed_seed()
+    #torch.set_printoptions(threshold=float('inf'), edgeitems=torch.inf)
     if device.type != "cuda":
         pytest.skip("需要CUDA设备进行测试")
 
@@ -55,13 +58,13 @@ def test_gptq_gemm_opt_correctness(a_shape, weight_shape, zeros_shape, scales_sh
         device=device,
         dtype=torch.int32
     )
-    scales = torch.randn(scales_shape, device=device, dtype=torch.float16) 
+    scales = torch.randn(scales_shape, device=device, dtype=torch.float16) / 10
     idx = torch.empty((0,), device=device, dtype=torch.int32) 
 
     with torch.no_grad():
         output_original = torch.ops._C.gptq_gemm(a, weight, zeros, scales, idx, use_exllama, bit)
         output_new = torch.ops._C.gptq_gemm_opt(a, weight, zeros, scales, idx, use_exllama, bit)
-
+    torch.cuda.synchronize()
     assert output_original.shape == output_new.shape, "输出形状不一致"
     
     print(a)
@@ -71,8 +74,8 @@ def test_gptq_gemm_opt_correctness(a_shape, weight_shape, zeros_shape, scales_sh
     print(output_original)
     print(output_new)
 
-    rtol = 1e-1
-    atol = 1
+    rtol = 0.1
+    atol = 0.1
     assert_close(
         output_original,
         output_new,

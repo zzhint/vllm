@@ -1483,7 +1483,7 @@ void reconstruct_gptq(const uint32_t* b_q_weight, const uint32_t* b_gptq_qzeros,
                                            width, groups, out);
 }
 
-void print_dp(half* temp_dq, int size_k, int size_n) {
+void print_dq(const  half* temp_dq, int size_k, int size_n) {
   half* h_data = new half[size_k * size_n];
   cudaMemcpy(h_data, temp_dq, size_k * size_n * sizeof(half), cudaMemcpyDeviceToHost);
 
@@ -1507,6 +1507,7 @@ void print_dp(half* temp_dq, int size_k, int size_n) {
     }
     printf("\n");
   }
+  printf("\n");
   printf("\n");
 
 
@@ -1535,7 +1536,9 @@ void gemm_half_q_half_cuda(cublasHandle_t cublas_handle, const half* a,
     if (use_exllama) {
       reconstruct_exllama(b_q_weight, b_gptq_qzeros, b_gptq_scales, b_g_idx,
                           temp_dq, size_k, size_n, groups, bit);
-      //print_dp(temp_dq, size_k, size_n);
+      //print_dq(temp_dq, size_k, size_n);
+      //printf("A: \n");
+      //print_dq(a, size_m, size_k);
     } else {
       reconstruct_gptq(b_q_weight, b_gptq_qzeros, b_gptq_scales, b_g_idx,
                        temp_dq, size_k, size_n, groups, bit);
@@ -1890,7 +1893,7 @@ torch::Tensor gptq_gemm_opt(torch::Tensor a, torch::Tensor b_q_weight,
   int smem_size = prop.sharedMemPerBlock;
   int group_size = a.size(1) / b_gptq_qzeros.size(0);
 
-  int split_k_slices = 4;
+  int split_k_slices = 1;
   using accscalar_t = float;
   //just need contiguous
   at::Tensor temp_for_reduce_c = torch::empty(
