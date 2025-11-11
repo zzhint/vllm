@@ -1893,7 +1893,7 @@ torch::Tensor gptq_gemm_opt(torch::Tensor a, torch::Tensor b_q_weight,
   int smem_size = prop.sharedMemPerBlock;
   int group_size = a.size(1) / b_gptq_qzeros.size(0);
 
-  int split_k_slices = 1;
+  int split_k_slices = 4;
   //just need contiguous
   at::Tensor temp_for_reduce_c = torch::empty(
           {a.size(0) * b_q_weight.size(1) *split_k_slices}, options);

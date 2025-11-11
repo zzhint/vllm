@@ -1,10 +1,10 @@
 import torch
 import pytest
 from torch.testing import assert_close
-
-m=256
+'''
+m=17
 n=4096
-k=1024
+k=4096
 TEST_CASES = [
     ((m, k), (k//8, n), (k // 128, n // 8), (k // 128, n), 4, True)
 ]
@@ -13,7 +13,7 @@ TEST_CASES = [
 
 
 
-input_tokens = 1024
+input_tokens = 15
 
 TEST_CASES = [
     ((input_tokens, 1024), (128, 4096), (8, 512), (8, 4096), 4, True),
@@ -25,7 +25,7 @@ TEST_CASES = [
     ((input_tokens, 4096), (512, 24576), (32, 3072), (32, 24576), 4, True),
     ((input_tokens, 12288), (1536, 4096), (96, 512), (96, 4096), 4, True),
 ]
-'''
+
 
 def set_fixed_seed(seed: int = 42):
     torch.manual_seed(seed) 
