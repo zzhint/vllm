@@ -53,7 +53,7 @@ struct GPTQ_GemmConfig {
 
     static constexpr int bK_q = bK / q_div;
     static constexpr int bN_q = bN / q_div;
-    static constexpr int group_size_div_q_div = group_size / q_div;
+    static constexpr int n_bK_in_one_group = group_size / bK;
     
     //smem size
     static constexpr int smem_size_A = bM * bK * kStage * sizeof(scalar_t);

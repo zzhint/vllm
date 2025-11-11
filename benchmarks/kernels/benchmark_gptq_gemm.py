@@ -3,7 +3,7 @@ from triton.testing import Benchmark, perf_report, do_bench, do_bench_cudagraph 
 
 from vllm._custom_ops import gptq_gemm, gptq_gemm_opt
 
-input_tokens = 256
+input_tokens = 1024
 
 TEST_CASES = [
     ((input_tokens, 1024), (128, 4096), (8, 512), (8, 4096), 4, True),

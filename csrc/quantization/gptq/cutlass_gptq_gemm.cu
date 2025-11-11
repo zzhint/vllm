@@ -210,6 +210,60 @@
             }
             printf("\n");
         }
+
+
+    for(int idx_group = 0; idx_group < n_group; idx_group++) {
+        Tensor this_group_gA = gA(_,_,idx_group);
+        Tensor this_group_gB_q_T = gB_q_T(_,_,idx_group);
+        Tensor this_group_gB_zeros = gB_zeros(_,_,idx_group);
+        Tensor this_group_gB_scales = gB_scales(_, _, idx_group);
+        
+        for(int idx_n_thread = threadIdx.x; idx_n_thread < bN; idx_n_thread += blockDim.x) {
+            sB_scales(idx_n_thread, 0) = this_group_gB_scales(idx_n_thread, 0);
+            uint32_t zeros_val_q = this_group_gB_zeros(idx_n_thread / q_div, 0);
+            int bit_offset = (idx_n_thread % q_div) * bit;
+            zeros_val_q = (zeros_val_q >> bit_offset) & bit_mask;
+            sB_zeros(idx_n_thread, 0) = zeros_val_q + 1;
+        }
+        __syncthreads();
+
+        Tensor this_group_bK_div_gA = local_tile(this_group_gA, make_tile(Int<bM>{}, Int<bK>{}), make_coord(0, _));
+        Tensor this_group_bK_div_gB_q_T = local_tile(this_group_gB_q_T, make_tile(Int<bN>{}, Int<bK_q>{}), make_coord(0, _));   
+        
+        for(int idx_bK = 0; idx_bK < size<2>(this_group_bK_div_gA); idx_bK++) {
+            Tensor this_group_this_bK_gA = this_group_bK_div_gA(_,_,idx_bK);
+            Tensor this_group_this_bK_tA_gA_g2s_copy = thr_g2s_copy_A.partition_S(this_group_this_bK_gA);
+            cute::copy_if(tiled_g2s_copy_A, tA_pA, this_group_this_bK_tA_gA_g2s_copy, tA_sA_g2s_copy);
+
+            Tensor this_group_this_bK_gB_q_T = this_group_bK_div_gB_q_T(_,_,idx_bK);
+            Tensor this_group_this_bK_tB_gB_q_T_g2s_copy = thr_g2s_copy_B_q_T.partition_S(this_group_this_bK_gB_q_T);
+            cute::copy(tiled_g2s_copy_B_q_T, this_group_this_bK_tB_gB_q_T_g2s_copy, tB_sB_q_T_g2s_copy);
+            __syncthreads();
+
+            
+            for(int idx_dq_N = 0; idx_dq_N < size<1>(tB_sB_q_T_s2r_copy_dq); idx_dq_N++) {
+                
+                for(int idx_dq_K = 0; idx_dq_K < size<2>(tB_sB_q_T_s2r_copy_dq); idx_dq_K++) {
+                    cute::copy(tiled_s2r_copy_dq, tB_sB_q_T_s2r_copy_dq(_, idx_dq_N, idx_dq_K), tB_rB_q_T_s2r_copy_dq);
+                    int idx_N_thread = get<0>(tB_id_sB_T_r2s_copy_dq_get_n(0, idx_dq_N, idx_dq_K));
+                    uint32_t zero_thread = sB_zeros(idx_N_thread,0);
+                    scalar_t scale_thread = sB_scales(idx_N_thread, 0);
+                    dq_thread_fn<scalar_t, B_q_dq_layout, bit, q_div, bit_mask>(
+                        tB_rB_q_T_s2r_copy_dq, tB_rB_T_r2s_copy_dq, zero_thread, scale_thread);
+                    cute::copy(tiled_r2s_copy_dq, tB_rB_T_r2s_copy_dq, tB_sB_T_r2s_copy_dq(_, idx_dq_N, idx_dq_K));
+                }
+                
+            }
+            __syncthreads();
+            cute::copy(tC_sA_mma, tC_rA_mma);
+            cute::copy(tC_sB_mma, tC_rB_mma);
+            cute::gemm(tiled_mma, tC_rC_mma, tC_rA_mma, tC_rB_mma, tC_rC_mma);
+            __syncthreads();
+        }
+    }
+
+
+
 */
 
 
@@ -291,8 +345,7 @@ __global__ void __launch_bounds__(GEMM_CONGIG::threads) cutlass_gptq_gemm_kernel
     
     constexpr int bK_q = GEMM_CONGIG::bK_q;
     constexpr int bN_q = GEMM_CONGIG::bN_q;
-
-    constexpr int group_size_div_q_div = GEMM_CONGIG::group_size_div_q_div;
+    constexpr int n_bK_in_one_group = GEMM_CONGIG::n_bK_in_one_group;
 
     constexpr int smem_size_A = GEMM_CONGIG::smem_size_A;
     constexpr int smem_size_B = GEMM_CONGIG::smem_size_B;
@@ -352,30 +405,12 @@ __global__ void __launch_bounds__(GEMM_CONGIG::threads) cutlass_gptq_gemm_kernel
     Tensor mB_scales = B_scales(_,_,split_k_idx);
     Tensor mC_reduce = C_reduce(_,_,split_k_idx);
 
-
-/*
-
-    Tensor mA = make_tensor(make_gmem_ptr(kernel_params.A_ptr), make_shape(M, K), make_stride(K, Int<1>{}));
-    Tensor id_mA = make_identity_tensor(shape(mA));
-    Tensor mB_q_T = make_tensor(make_gmem_ptr(kernel_params.B_q_ptr), make_shape(N, K / q_div), make_stride(Int<1>{}, N));
-    Tensor mB_zeros = make_tensor(make_gmem_ptr(kernel_params.B_zeros_ptr), 
-        make_shape(N / q_div, K / group_size), make_stride(Int<1>{}, N / q_div));
-    Tensor mB_scales = make_tensor(make_gmem_ptr(kernel_params.B_scales_ptr),
-        make_shape(N, K / group_size), make_stride(Int<1>{}, N));
-    Tensor mC = make_tensor(make_gmem_ptr(kernel_params.C_ptr), make_shape(M, N), make_stride(N, Int<1>{}));
-    Tensor mC_reduce = make_tensor(make_gmem_ptr(kernel_params.C_reduce_ptr), 
-        make_shape(M, N, split_k_slices), make_stride(N, Int<1>{}, M*N));
-    Tensor id_mC = make_identity_tensor(shape(mC));
-
-*/
-
-
     int idx_m_block = blockIdx.y / l2_tile;
     int idx_n_block = blockIdx.z * l2_tile + blockIdx.y % l2_tile;
 
-    Tensor gA = local_tile(mA, make_tile(Int<bM>{}, Int<group_size>{}), make_coord(idx_m_block, _));  
-    Tensor id_gA = local_tile(id_mA, make_tile(Int<bM>{}, Int<group_size>{}), make_coord(idx_m_block, _));  
-    Tensor gB_q_T = local_tile(mB_q_T, make_tile(Int<bN>{}, Int<group_size_div_q_div>{}), make_coord(idx_n_block, _));
+    Tensor gA = local_tile(mA, make_tile(Int<bM>{}, Int<bK>{}), make_coord(idx_m_block, _));  
+    Tensor id_gA = local_tile(id_mA, make_tile(Int<bM>{}, Int<bK>{}), make_coord(idx_m_block, _));  
+    Tensor gB_q_T = local_tile(mB_q_T, make_tile(Int<bN>{}, Int<bK_q>{}), make_coord(idx_n_block, _));
     Tensor gB_zeros = local_tile(mB_zeros, make_tile(Int<bN_q>{}, Int<1>{}), make_coord(idx_n_block, _));
     Tensor gB_scales = local_tile(mB_scales, make_tile(Int<bN>{}, Int<1>{}), make_coord(idx_n_block, _));
     Tensor gC = local_tile(mC, make_tile(Int<bM>{}, Int<bN>{}), make_coord(idx_m_block, idx_n_block));
@@ -392,29 +427,18 @@ __global__ void __launch_bounds__(GEMM_CONGIG::threads) cutlass_gptq_gemm_kernel
 
     G2SCopyA tiled_g2s_copy_A;
     ThrCopy thr_g2s_copy_A = tiled_g2s_copy_A.get_slice(threadIdx.x);
+    Tensor tA_gA_g2s_copy = thr_g2s_copy_A.partition_S(gA);
     Tensor tA_sA_g2s_copy = thr_g2s_copy_A.partition_D(sA);  
-    Tensor tA_id_A_g2s_copy =  thr_g2s_copy_A.partition_D(id_gA);
+    Tensor tA_id_A_g2s_copy =  thr_g2s_copy_A.partition_S(id_gA); //
     Tensor tA_pA = make_tensor<bool>(make_shape(shape<0>(tA_sA_g2s_copy), size<1>(tA_sA_g2s_copy), size<2>(tA_sA_g2s_copy)),
                                     make_stride(make_stride(Int<0>{}, Int<0>{}) ,  Int<1>{}, Int<0>{}));
     for(int m = 0; m < size<1>(tA_pA); m++) {
         tA_pA(0,m,0) = elem_less(get<0>(tA_id_A_g2s_copy(0,m,0,0)), shape<0>(mA));
     }
-    /*
-    if(thread0() && block0()) {
-        print("tA_sA_g2s_copy:\n");
-        print(tA_sA_g2s_copy);
-        print("\n");
-        print("tA_id_A_g2s_copy:\n");
-        print(tA_id_A_g2s_copy);
-        print("\n");
-        print("tA_pA:\n");
-        print(tA_pA);
-        print("\n");
-    }
-    __syncthreads();*/
 
     G2SCopyB_q_T tiled_g2s_copy_B_q_T;
     ThrCopy thr_g2s_copy_B_q_T = tiled_g2s_copy_B_q_T.get_slice(threadIdx.x);
+    Tensor tB_gB_q_T_g2s_copy = thr_g2s_copy_B_q_T.partition_S(gB_q_T);
     Tensor tB_sB_q_T_g2s_copy = thr_g2s_copy_B_q_T.partition_D(sB_q_T);
 
     S2RDQCopy tiled_s2r_copy_dq;
@@ -441,57 +465,45 @@ __global__ void __launch_bounds__(GEMM_CONGIG::threads) cutlass_gptq_gemm_kernel
     Tensor tC_rC_mma = thr_mma.partition_fragment_C(sC);
  
     clear(tC_rC_mma);
-    int n_group = size<2>(gA);
-    
-    for(int idx_group = 0; idx_group < n_group; idx_group++) {
-        Tensor this_group_gA = gA(_,_,idx_group);
-        Tensor this_group_gB_q_T = gB_q_T(_,_,idx_group);
-        Tensor this_group_gB_zeros = gB_zeros(_,_,idx_group);
-        Tensor this_group_gB_scales = gB_scales(_, _, idx_group);
-        
-        for(int idx_n_thread = threadIdx.x; idx_n_thread < bN; idx_n_thread += blockDim.x) {
-            sB_scales(idx_n_thread, 0) = this_group_gB_scales(idx_n_thread, 0);
-            uint32_t zeros_val_q = this_group_gB_zeros(idx_n_thread / q_div, 0);
-            int bit_offset = (idx_n_thread % q_div) * bit;
-            zeros_val_q = (zeros_val_q >> bit_offset) & bit_mask;
-            sB_zeros(idx_n_thread, 0) = zeros_val_q + 1;
+    int n_bK = size<2>(gA);
+    for(int idx_bK = 0; idx_bK < n_bK; idx_bK++) {
+        if(idx_bK % n_bK_in_one_group == 0) {
+            int idx_group = idx_bK / n_bK_in_one_group;
+            Tensor this_group_gB_zeros = gB_zeros(_,_,idx_group);
+            Tensor this_group_gB_scales = gB_scales(_,_,idx_group);
+            for(int idx_n_thread = threadIdx.x; idx_n_thread < bN; idx_n_thread += blockDim.x) {
+                sB_scales(idx_n_thread, 0) = this_group_gB_scales(idx_n_thread, 0);
+                uint32_t zeros_val_q = this_group_gB_zeros(idx_n_thread / q_div, 0);
+                int bit_offset = (idx_n_thread % q_div) * bit;
+                zeros_val_q = (zeros_val_q >> bit_offset) & bit_mask;
+                sB_zeros(idx_n_thread, 0) = zeros_val_q + 1;
+            }
         }
         __syncthreads();
+        cute::copy_if(tiled_g2s_copy_A, tA_pA, tA_gA_g2s_copy(_,_,_,idx_bK), tA_sA_g2s_copy);
+        cute::copy(tiled_g2s_copy_B_q_T, tB_gB_q_T_g2s_copy(_,_,_,idx_bK), tB_sB_q_T_g2s_copy);
+        __syncthreads();
 
-        Tensor this_group_bK_div_gA = local_tile(this_group_gA, make_tile(Int<bM>{}, Int<bK>{}), make_coord(0, _));
-        Tensor this_group_bK_div_gB_q_T = local_tile(this_group_gB_q_T, make_tile(Int<bN>{}, Int<bK_q>{}), make_coord(0, _));   
-        
-        for(int idx_bK = 0; idx_bK < size<2>(this_group_bK_div_gA); idx_bK++) {
-            Tensor this_group_this_bK_gA = this_group_bK_div_gA(_,_,idx_bK);
-            Tensor this_group_this_bK_tA_gA_g2s_copy = thr_g2s_copy_A.partition_S(this_group_this_bK_gA);
-            cute::copy_if(tiled_g2s_copy_A, tA_pA, this_group_this_bK_tA_gA_g2s_copy, tA_sA_g2s_copy);
-
-            Tensor this_group_this_bK_gB_q_T = this_group_bK_div_gB_q_T(_,_,idx_bK);
-            Tensor this_group_this_bK_tB_gB_q_T_g2s_copy = thr_g2s_copy_B_q_T.partition_S(this_group_this_bK_gB_q_T);
-            cute::copy(tiled_g2s_copy_B_q_T, this_group_this_bK_tB_gB_q_T_g2s_copy, tB_sB_q_T_g2s_copy);
-            __syncthreads();
-
-            
-            for(int idx_dq_N = 0; idx_dq_N < size<1>(tB_sB_q_T_s2r_copy_dq); idx_dq_N++) {
-                
-                for(int idx_dq_K = 0; idx_dq_K < size<2>(tB_sB_q_T_s2r_copy_dq); idx_dq_K++) {
-                    cute::copy(tiled_s2r_copy_dq, tB_sB_q_T_s2r_copy_dq(_, idx_dq_N, idx_dq_K), tB_rB_q_T_s2r_copy_dq);
-                    int idx_N_thread = get<0>(tB_id_sB_T_r2s_copy_dq_get_n(0, idx_dq_N, idx_dq_K));
-                    uint32_t zero_thread = sB_zeros(idx_N_thread,0);
-                    scalar_t scale_thread = sB_scales(idx_N_thread, 0);
-                    dq_thread_fn<scalar_t, B_q_dq_layout, bit, q_div, bit_mask>(
-                        tB_rB_q_T_s2r_copy_dq, tB_rB_T_r2s_copy_dq, zero_thread, scale_thread);
-                    cute::copy(tiled_r2s_copy_dq, tB_rB_T_r2s_copy_dq, tB_sB_T_r2s_copy_dq(_, idx_dq_N, idx_dq_K));
-                }
-                
+        for(int idx_dq_N = 0; idx_dq_N < size<1>(tB_sB_q_T_s2r_copy_dq); idx_dq_N++) {              
+            for(int idx_dq_K = 0; idx_dq_K < size<2>(tB_sB_q_T_s2r_copy_dq); idx_dq_K++) {
+                cute::copy(tiled_s2r_copy_dq, tB_sB_q_T_s2r_copy_dq(_, idx_dq_N, idx_dq_K), tB_rB_q_T_s2r_copy_dq);
+                int idx_N_thread = get<0>(tB_id_sB_T_r2s_copy_dq_get_n(0, idx_dq_N, idx_dq_K));
+                uint32_t zero_thread = sB_zeros(idx_N_thread,0);
+                scalar_t scale_thread = sB_scales(idx_N_thread, 0);
+                dq_thread_fn<scalar_t, B_q_dq_layout, bit, q_div, bit_mask>(
+                    tB_rB_q_T_s2r_copy_dq, tB_rB_T_r2s_copy_dq, zero_thread, scale_thread);
+                cute::copy(tiled_r2s_copy_dq, tB_rB_T_r2s_copy_dq, tB_sB_T_r2s_copy_dq(_, idx_dq_N, idx_dq_K));
             }
-            __syncthreads();
-            cute::copy(tC_sA_mma, tC_rA_mma);
-            cute::copy(tC_sB_mma, tC_rB_mma);
-            cute::gemm(tiled_mma, tC_rC_mma, tC_rA_mma, tC_rB_mma, tC_rC_mma);
-            __syncthreads();
+            
         }
+        __syncthreads();
+        cute::copy(tC_sA_mma, tC_rA_mma);
+        cute::copy(tC_sB_mma, tC_rB_mma);
+        cute::gemm(tiled_mma, tC_rC_mma, tC_rA_mma, tC_rB_mma, tC_rC_mma);
+        __syncthreads();
     }
+    
+
 
     cute::copy(tC_rC_mma, tC_sC_mma);
     __syncthreads();
@@ -507,22 +519,6 @@ __global__ void __launch_bounds__(GEMM_CONGIG::threads) cutlass_gptq_gemm_kernel
     for(int m = 0; m < size<1>(tC_pC); m++) {
         tC_pC(0, m, 0) = elem_less(get<0>(tC_id_gC_s2g_copy(0,m,0)), shape<0>(mC));
     }
-    /*
-    if(thread0() && block0()) {
-        print("tC_sC_s2g_copy:\n");
-        print(tC_sC_s2g_copy);
-        print("\n");
-        print("tC_gC_reduce_s2g_copy:\n");
-        print(tC_gC_reduce_s2g_copy);
-        print("\n");
-        print("tC_id_gC_s2g_copy:\n");
-        print(tC_id_gC_s2g_copy);
-        print("\n");
-        print("tC_pC:\n");
-        print(tC_pC);
-        print("\n");
-    }
-    __syncthreads();*/
 
     cute::copy_if(tiled_s2g_copy_C, tC_pC, tC_sC_s2g_copy, tC_gC_reduce_s2g_copy);
     __threadfence();
