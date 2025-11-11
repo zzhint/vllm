@@ -13,7 +13,7 @@ TEST_CASES = [
 
 
 
-input_tokens = 15
+input_tokens = 256
 
 TEST_CASES = [
     ((input_tokens, 1024), (128, 4096), (8, 512), (8, 4096), 4, True),

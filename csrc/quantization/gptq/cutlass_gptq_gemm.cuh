@@ -22,6 +22,10 @@ struct alignas(sizeof(scalar_t) * vec_size) aligned_vector {
   scalar_t val[vec_size];
 };
 
+static constexpr int M_BLOCK = 64;
+static constexpr int N_BLOCK = 128;
+
+
 
 template<typename _scalar_t, 
     int _bM, int _bN, int _bK, int _kStage,
@@ -141,17 +145,8 @@ struct GPTQ_GemmConfig {
     //0 2 4 6 1 3 5 7
     using B_q_dq_layout = Layout<Shape<Shape<_4, _2>, _1>, Stride<Stride<_2, _1>, _1>>; 
 
-    //for reduce kernel
-    static constexpr int reduce_threads = 1024;
     using reduce_g2g_copy_atom = vec_copy_scalar_t_atom;
-
-    static constexpr int reduce_g2r_copyC_N_threads = bN / vec_scalar_t_copy;
-    static constexpr int reduce_g2r_copyC_M_threads = reduce_threads / reduce_g2r_copyC_N_threads;
-
-    using ReduceG2GCopyC = decltype(make_tiled_copy(reduce_g2g_copy_atom{},
-                            make_layout(make_shape(Int<reduce_g2r_copyC_M_threads>{}, Int<reduce_g2r_copyC_N_threads>{}),
-                                        make_stride(Int<reduce_g2r_copyC_N_threads>{}, Int<1>{})),
-                            make_layout(make_shape(Int<1>{}, Int<vec_scalar_t_copy>{}))));
+    using ReduceG2GCopyC = S2GCopyC;
 
 
 };
@@ -167,18 +162,32 @@ struct GptQ_Kernel_Params {
     const int* B_g_idx_ptr;
     scalar_t* C_ptr;
     scalar_t* C_reduce_ptr;
+    uint32_t* C_semaphore_ptr;
     int M;
     int N;
     int K;
+    int count_m_blocks;
+    int count_n_blocks;
     int split_k_slices;
     int bit;
     int group_size;
+    int l2_tile;
     bool use_exllama;
 };
 
+struct Launch_Kernel_Params {
+    dim3 grid;
+    cudaStream_t stream; 
+};
+
+inline int ceil_div(int a, int b) {
+    return (a + b - 1) / b;
+}
 
 template<typename scalar_t>
-void run_cutlass_gptq_gemm(GptQ_Kernel_Params<scalar_t> kernel_params, const cudaStream_t stream);
+void run_cutlass_gptq_gemm(GptQ_Kernel_Params<scalar_t> kernel_params, Launch_Kernel_Params launch_kernel_params);
+
+
 
 }
 

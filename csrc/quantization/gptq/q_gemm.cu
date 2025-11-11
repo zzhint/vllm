@@ -1882,23 +1882,37 @@ torch::Tensor gptq_gemm_opt(torch::Tensor a, torch::Tensor b_q_weight,
                         torch::Tensor b_gptq_qzeros,
                         torch::Tensor b_gptq_scales, torch::Tensor b_g_idx,
                         bool use_exllama, int64_t bit) {
+
+  int M = a.size(0);
+  int N = b_q_weight.size(1);
+  int K = a.size(1);
+
+  int split_k_slices = 4;
+  int l2_tile = 4;
+
   const at::cuda::OptionalCUDAGuard device_guard(device_of(a));
   auto options = torch::TensorOptions().dtype(a.dtype()).device(a.device());
-  at::Tensor c = torch::empty({a.size(0), b_q_weight.size(1)}, options);
+  at::Tensor c = torch::empty({M, N}, options);
+  at::Tensor temp_for_reduce_c = torch::empty({M * N * split_k_slices}, options);
 
   int device_id = a.device().index();
   cudaDeviceProp prop;
   cudaGetDeviceProperties(&prop, device_id);
   int sm_count = prop.multiProcessorCount;
   int smem_size = prop.sharedMemPerBlock;
-  int group_size = a.size(1) / b_gptq_qzeros.size(0);
+  int group_size = K / b_gptq_qzeros.size(0);
 
-  int split_k_slices = 4;
-  //just need contiguous
-  at::Tensor temp_for_reduce_c = torch::empty(
-          {a.size(0) * b_q_weight.size(1) *split_k_slices}, options);
 
-  const cudaStream_t stream = at::cuda::getCurrentCUDAStream();
+
+  int count_m_blocks = cutlass_gptq::ceil_div(M, cutlass_gptq::M_BLOCK);
+  int count_n_blocks = cutlass_gptq::ceil_div(N, cutlass_gptq::N_BLOCK);
+  at::Tensor semaphore_for_reduce_c 
+    = torch::zeros({count_m_blocks * count_n_blocks}, options.dtype(torch::kUInt32));
+  dim3 grid(split_k_slices, count_m_blocks * l2_tile, cutlass_gptq::ceil_div(count_n_blocks, l2_tile));
+
+  cutlass_gptq::Launch_Kernel_Params launch_kernel_params;
+  launch_kernel_params.stream = at::cuda::getCurrentCUDAStream();
+  launch_kernel_params.grid = grid;
 
   VLLM_DISPATCH_HALF_TYPES(
       a.scalar_type(), "gptq_gemm_opt", [&] {
@@ -1912,15 +1926,19 @@ torch::Tensor gptq_gemm_opt(torch::Tensor a, torch::Tensor b_q_weight,
         kernel_params.B_g_idx_ptr = b_g_idx.device().is_meta() ? NULL : (const int*)b_g_idx.data_ptr();
         kernel_params.C_ptr = (cuda_type*) c.data_ptr();
         kernel_params.C_reduce_ptr = (cuda_type* ) temp_for_reduce_c.data_ptr();
-        kernel_params.M = c.size(0);
-        kernel_params.N = c.size(1);
-        kernel_params.K = a.size(1);
+        kernel_params.C_semaphore_ptr = (uint32_t*) semaphore_for_reduce_c.data_ptr();
+        kernel_params.M = M;
+        kernel_params.N = N;
+        kernel_params.K = K;
+        kernel_params.count_m_blocks = count_m_blocks;
+        kernel_params.count_n_blocks = count_n_blocks;
         kernel_params.split_k_slices = split_k_slices;
         kernel_params.bit = bit;
         kernel_params.group_size = group_size;
+        kernel_params.l2_tile = l2_tile;
         kernel_params.use_exllama = use_exllama;
 
-        cutlass_gptq::run_cutlass_gptq_gemm<cuda_type>(kernel_params, stream);
+        cutlass_gptq::run_cutlass_gptq_gemm<cuda_type>(kernel_params, launch_kernel_params);
       });
 
   return c;

@@ -276,6 +276,7 @@ __global__ void __launch_bounds__(GEMM_CONGIG::threads) cutlass_gptq_gemm_kernel
     using B_q_dq_layout = typename GEMM_CONGIG::B_q_dq_layout;
 
     using S2GCopyC = typename GEMM_CONGIG::S2GCopyC;
+    using ReduceG2GCopyC = typename GEMM_CONGIG::ReduceG2GCopyC;
 
     constexpr bool is_acc_type_match = GEMM_CONGIG::is_acc_type_match;
 
@@ -314,8 +315,12 @@ __global__ void __launch_bounds__(GEMM_CONGIG::threads) cutlass_gptq_gemm_kernel
     int M = kernel_params.M;
     int N = kernel_params.N;
     int K = kernel_params.K;
+    int count_m_blocks = kernel_params.count_m_blocks;
+    int count_n_blocks = kernel_params.count_n_blocks;
     int split_k_slices = kernel_params.split_k_slices;
     int split_k_dim = K / split_k_slices;
+
+    int l2_tile = kernel_params.l2_tile;
 
     Tensor A = make_tensor(make_gmem_ptr(kernel_params.A_ptr), 
                     make_shape( M,         split_k_dim,              split_k_slices),
@@ -333,14 +338,13 @@ __global__ void __launch_bounds__(GEMM_CONGIG::threads) cutlass_gptq_gemm_kernel
     Tensor C_reduce = make_tensor(make_gmem_ptr(kernel_params.C_reduce_ptr), 
                     make_shape( M,         N,                        split_k_slices), 
                     make_stride(N,         Int<1>{},                 M*N));
-
     Tensor mC = make_tensor(make_gmem_ptr(kernel_params.C_ptr), 
                     make_shape( M,         N), 
                     make_stride(N,         Int<1>{}));
     Tensor id_mC = make_identity_tensor(shape(mC));
 
 
-    int split_k_idx = blockIdx.z;
+    int split_k_idx = blockIdx.x;
     Tensor mA = A(_,_,split_k_idx);
     Tensor id_mA = id_A(_,_,split_k_idx);
     Tensor mB_q_T = B_q_T(_,_,split_k_idx);
@@ -366,17 +370,18 @@ __global__ void __launch_bounds__(GEMM_CONGIG::threads) cutlass_gptq_gemm_kernel
 */
 
 
-    int block_idx_x = blockIdx.x;
-    int block_idx_y = blockIdx.y;
+    int idx_m_block = blockIdx.y / l2_tile;
+    int idx_n_block = blockIdx.z * l2_tile + blockIdx.y % l2_tile;
 
-    Tensor gA = local_tile(mA, make_tile(Int<bM>{}, Int<group_size>{}), make_coord(block_idx_x, _));  
-    Tensor id_gA = local_tile(id_mA, make_tile(Int<bM>{}, Int<group_size>{}), make_coord(block_idx_x, _));  
-    Tensor gB_q_T = local_tile(mB_q_T, make_tile(Int<bN>{}, Int<group_size_div_q_div>{}), make_coord(block_idx_y, _));
-    Tensor gB_zeros = local_tile(mB_zeros, make_tile(Int<bN_q>{}, Int<1>{}), make_coord(block_idx_y, _));
-    Tensor gB_scales = local_tile(mB_scales, make_tile(Int<bN>{}, Int<1>{}), make_coord(block_idx_y, _));
-    Tensor gC = local_tile(mC, make_tile(Int<bM>{}, Int<bN>{}), make_coord(block_idx_x, block_idx_y));
-    Tensor gC_reduce = local_tile(mC_reduce, make_tile(Int<bM>{}, Int<bN>{}), make_coord(block_idx_x, block_idx_y));
-    Tensor id_gC = local_tile(id_mC, make_tile(Int<bM>{}, Int<bN>{}), make_coord(block_idx_x, block_idx_y));
+    Tensor gA = local_tile(mA, make_tile(Int<bM>{}, Int<group_size>{}), make_coord(idx_m_block, _));  
+    Tensor id_gA = local_tile(id_mA, make_tile(Int<bM>{}, Int<group_size>{}), make_coord(idx_m_block, _));  
+    Tensor gB_q_T = local_tile(mB_q_T, make_tile(Int<bN>{}, Int<group_size_div_q_div>{}), make_coord(idx_n_block, _));
+    Tensor gB_zeros = local_tile(mB_zeros, make_tile(Int<bN_q>{}, Int<1>{}), make_coord(idx_n_block, _));
+    Tensor gB_scales = local_tile(mB_scales, make_tile(Int<bN>{}, Int<1>{}), make_coord(idx_n_block, _));
+    Tensor gC = local_tile(mC, make_tile(Int<bM>{}, Int<bN>{}), make_coord(idx_m_block, idx_n_block));
+    Tensor gC_reduce = local_tile(mC_reduce, make_tile(Int<bM>{}, Int<bN>{}), make_coord(idx_m_block, idx_n_block));
+    Tensor gC_reduce_all = local_tile(C_reduce, make_tile(Int<bM>{}, Int<bN>{}), make_coord(idx_m_block, idx_n_block));
+    Tensor id_gC = local_tile(id_mC, make_tile(Int<bM>{}, Int<bN>{}), make_coord(idx_m_block, idx_n_block));
 
     Tensor sA = make_tensor(make_smem_ptr(A_smem), SmemLayoutA{});
     Tensor sB_T = make_tensor(make_smem_ptr(B_smem), SmemLayoutB_T{});
@@ -484,7 +489,7 @@ __global__ void __launch_bounds__(GEMM_CONGIG::threads) cutlass_gptq_gemm_kernel
             cute::copy(tC_sA_mma, tC_rA_mma);
             cute::copy(tC_sB_mma, tC_rB_mma);
             cute::gemm(tiled_mma, tC_rC_mma, tC_rA_mma, tC_rB_mma, tC_rC_mma);
-            __syncthreads();//上面还读取sB_zeros，这里不能提前去修改
+            __syncthreads();
         }
     }
 
@@ -520,6 +525,51 @@ __global__ void __launch_bounds__(GEMM_CONGIG::threads) cutlass_gptq_gemm_kernel
     __syncthreads();*/
 
     cute::copy_if(tiled_s2g_copy_C, tC_pC, tC_sC_s2g_copy, tC_gC_reduce_s2g_copy);
+    __threadfence();
+    __syncthreads();
+
+    __shared__ bool s_is_last_split_k;
+
+    if(threadIdx.x == 0) {
+        uint32_t* semaphore_ptr = kernel_params.C_semaphore_ptr 
+            + idx_m_block * count_n_blocks + idx_n_block;
+        uint32_t  split_finished_old = atomicAdd(semaphore_ptr, 1);
+        s_is_last_split_k = (split_finished_old == split_k_slices - 1);
+    }
+    __syncthreads();
+
+    if(!s_is_last_split_k) {
+        return;
+    }
+
+
+    ReduceG2GCopyC tiled_reduce_g2g_copy_C;
+    ThrCopy thr_reduce_g2g_copy_C = tiled_reduce_g2g_copy_C.get_slice(threadIdx.x);
+    Tensor tC_gC_g2g_copy = thr_reduce_g2g_copy_C.partition_D(gC);
+    Tensor tC_rC_g2g_copy = make_fragment_like(tC_gC_g2g_copy);
+    clear(tC_rC_g2g_copy);
+    
+    Tensor tC_gC_reduce_all_g2g_copy = thr_reduce_g2g_copy_C.partition_S(gC_reduce_all);
+    Tensor tC_rC_reduce_g2g_copy = make_fragment_like(tC_gC_g2g_copy);
+
+    for(int idx_M_thread = 0; idx_M_thread < size<1>(tC_rC_g2g_copy); idx_M_thread++) {
+        for(int idx_N_thread = 0; idx_N_thread < size<2>(tC_rC_g2g_copy); idx_N_thread++) {
+            for(int idx_split_k = 0; idx_split_k < split_k_slices; idx_split_k++) {
+                cute::copy_if(tiled_reduce_g2g_copy_C, tC_pC(_, idx_M_thread, idx_N_thread), 
+                tC_gC_reduce_all_g2g_copy(_, idx_M_thread, idx_N_thread, idx_split_k),
+                tC_rC_reduce_g2g_copy(_, idx_M_thread, idx_N_thread));
+
+                for(int idx_vec = 0; idx_vec < size<0>(tC_rC_g2g_copy); idx_vec++) {
+                    tC_rC_g2g_copy(idx_vec, idx_M_thread, idx_N_thread) 
+                        += tC_rC_reduce_g2g_copy(idx_vec, idx_M_thread, idx_N_thread);
+                }
+            }
+            cute::copy_if(tiled_reduce_g2g_copy_C, tC_pC(_, idx_M_thread, idx_N_thread), 
+                tC_rC_g2g_copy(_, idx_M_thread, idx_N_thread),
+                tC_gC_g2g_copy(_, idx_M_thread, idx_N_thread));
+
+        }
+    }
 
 
 
@@ -552,14 +602,14 @@ __global__ void __launch_bounds__(GEMM_CONGIG::reduce_threads) cutlass_gptq_redu
                     make_stride(N,         Int<1>{},                 M*N));
     Tensor id_mC = make_identity_tensor(shape(mC));
 
-    int block_idx_x = blockIdx.x;
-    int block_idx_y = blockIdx.y;
+    int idx_m_block = blockIdx.x;
+    int idx_n_block = blockIdx.y;
 
     
 
-    Tensor gC = local_tile(mC, make_tile(Int<bM>{}, Int<bN>{}), make_coord(block_idx_x, block_idx_y));
-    Tensor gC_reduce_all = local_tile(C_reduce, make_tile(Int<bM>{}, Int<bN>{}), make_coord(block_idx_x, block_idx_y));
-    Tensor id_gC = local_tile(id_mC, make_tile(Int<bM>{}, Int<bN>{}), make_coord(block_idx_x, block_idx_y));
+    Tensor gC = local_tile(mC, make_tile(Int<bM>{}, Int<bN>{}), make_coord(idx_m_block, idx_n_block));
+    Tensor gC_reduce_all = local_tile(C_reduce, make_tile(Int<bM>{}, Int<bN>{}), make_coord(idx_m_block, idx_n_block));
+    Tensor id_gC = local_tile(id_mC, make_tile(Int<bM>{}, Int<bN>{}), make_coord(idx_m_block, idx_n_block));
 
 
     ReduceG2GCopyC tiled_reduce_g2g_copy_C;
@@ -603,7 +653,7 @@ __global__ void __launch_bounds__(GEMM_CONGIG::reduce_threads) cutlass_gptq_redu
 template<typename GEMM_CONGIG, typename GptQ_Kernel_Params_T>
 void launch_cutlass_gptq_gemm_kernel(
     GptQ_Kernel_Params_T kernel_params,
-    const cudaStream_t stream) {
+    Launch_Kernel_Params launch_kernel_params) {
 
     int M = kernel_params.M;
     int N = kernel_params.N;
@@ -611,16 +661,15 @@ void launch_cutlass_gptq_gemm_kernel(
     int M_blocks = (M + GEMM_CONGIG::bM - 1) / GEMM_CONGIG::bM;
     int N_blocks = (N + GEMM_CONGIG::bN - 1) / GEMM_CONGIG::bN;
 
-    dim3 grid(M_blocks, N_blocks, kernel_params.split_k_slices);
     dim3 block(GEMM_CONGIG::threads);
     int smem_size = GEMM_CONGIG::smem_size;
-    cutlass_gptq_gemm_kernel<GEMM_CONGIG><<<grid, block, smem_size, stream>>>(kernel_params);
+    cutlass_gptq_gemm_kernel<GEMM_CONGIG><<<launch_kernel_params.grid, block, smem_size, launch_kernel_params.stream>>>(kernel_params);
 }
 
 template<typename GEMM_CONGIG, typename GptQ_Kernel_Params_T>
 void launch_cutlass_gptq_reduce_kernel(
     GptQ_Kernel_Params_T kernel_params,
-    const cudaStream_t stream) {
+    Launch_Kernel_Params launch_kernel_params) {
 
     int M = kernel_params.M;
     int N = kernel_params.N;
@@ -630,21 +679,21 @@ void launch_cutlass_gptq_reduce_kernel(
 
     dim3 grid(M_blocks, N_blocks);
     dim3 block(GEMM_CONGIG::reduce_threads);
-    cutlass_gptq_reduce_kernel<GEMM_CONGIG><<<grid, block, 0, stream>>>(kernel_params);
+    cutlass_gptq_reduce_kernel<GEMM_CONGIG><<<grid, block, 0, launch_kernel_params.stream>>>(kernel_params);
 }
 
 
 
 template<typename scalar_t>
-void run_cutlass_gptq_gemm(GptQ_Kernel_Params<scalar_t> kernel_params, const cudaStream_t stream) {
-    using TEST_GEMM_CONGIG = GPTQ_GemmConfig<scalar_t, 64, 128, 32, 1, 4, 128>;
+void run_cutlass_gptq_gemm(GptQ_Kernel_Params<scalar_t> kernel_params, Launch_Kernel_Params launch_kernel_params) {
+    using TEST_GEMM_CONGIG = GPTQ_GemmConfig<scalar_t, M_BLOCK, N_BLOCK, 32, 1, 4, 128>;
     
-    launch_cutlass_gptq_gemm_kernel<TEST_GEMM_CONGIG>(kernel_params, stream);
-    launch_cutlass_gptq_reduce_kernel<TEST_GEMM_CONGIG>(kernel_params, stream);
+    launch_cutlass_gptq_gemm_kernel<TEST_GEMM_CONGIG>(kernel_params, launch_kernel_params);
+    //launch_cutlass_gptq_reduce_kernel<TEST_GEMM_CONGIG>(kernel_params, launch_kernel_params);
 }
 
-template void run_cutlass_gptq_gemm<half>(GptQ_Kernel_Params<half>, const cudaStream_t);
-template void run_cutlass_gptq_gemm<__nv_bfloat16>(GptQ_Kernel_Params<__nv_bfloat16>, const cudaStream_t);
+template void run_cutlass_gptq_gemm<half>(GptQ_Kernel_Params<half>, Launch_Kernel_Params);
+template void run_cutlass_gptq_gemm<__nv_bfloat16>(GptQ_Kernel_Params<__nv_bfloat16>, Launch_Kernel_Params);
 
 
 }
