@@ -2,7 +2,7 @@ import torch
 import pytest
 from torch.testing import assert_close
 
-m=256
+m=1024
 n=4096
 k=4096
 TEST_CASES = [

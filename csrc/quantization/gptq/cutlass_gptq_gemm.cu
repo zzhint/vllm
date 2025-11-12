@@ -347,6 +347,8 @@ __global__ void __launch_bounds__(GEMM_CONGIG::threads) cutlass_gptq_gemm_kernel
     constexpr int bN_q = GEMM_CONGIG::bN_q;
     constexpr int n_bK_in_one_group = GEMM_CONGIG::n_bK_in_one_group;
 
+    constexpr int kStage = GEMM_CONGIG::kStage;
+
     constexpr int smem_size_A = GEMM_CONGIG::smem_size_A;
     constexpr int smem_size_B = GEMM_CONGIG::smem_size_B;
     constexpr int smem_size_B_q = GEMM_CONGIG::smem_size_B_q;
@@ -430,11 +432,13 @@ __global__ void __launch_bounds__(GEMM_CONGIG::threads) cutlass_gptq_gemm_kernel
     Tensor tA_gA_g2s_copy = thr_g2s_copy_A.partition_S(gA);
     Tensor tA_sA_g2s_copy = thr_g2s_copy_A.partition_D(sA);  
     Tensor tA_id_A_g2s_copy =  thr_g2s_copy_A.partition_S(id_gA); //
-    Tensor tA_pA = make_tensor<bool>(make_shape(shape<0>(tA_sA_g2s_copy), size<1>(tA_sA_g2s_copy), size<2>(tA_sA_g2s_copy)),
-                                    make_stride(make_stride(Int<0>{}, Int<0>{}) ,  Int<1>{}, Int<0>{}));
+    Tensor tA_pA = make_tensor<bool>(
+    make_shape( shape<0>(tA_sA_g2s_copy),         size<1>(tA_sA_g2s_copy), size<2>(tA_sA_g2s_copy)),
+    make_stride(make_stride(Int<0>{}, Int<0>{}) , Int<1>{},                Int<0>{}              ));
     for(int m = 0; m < size<1>(tA_pA); m++) {
         tA_pA(0,m,0) = elem_less(get<0>(tA_id_A_g2s_copy(0,m,0,0)), shape<0>(mA));
     }
+
 
     G2SCopyB_q_T tiled_g2s_copy_B_q_T;
     ThrCopy thr_g2s_copy_B_q_T = tiled_g2s_copy_B_q_T.get_slice(threadIdx.x);
@@ -444,12 +448,12 @@ __global__ void __launch_bounds__(GEMM_CONGIG::threads) cutlass_gptq_gemm_kernel
     S2RDQCopy tiled_s2r_copy_dq;
     ThrCopy thr_s2r_copy_dq = tiled_s2r_copy_dq.get_slice(threadIdx.x);
     Tensor tB_sB_q_T_s2r_copy_dq = thr_s2r_copy_dq.partition_S(sB_q_T);
-    Tensor tB_rB_q_T_s2r_copy_dq = make_fragment_like(tB_sB_q_T_s2r_copy_dq(_,0,0));
+    Tensor tB_rB_q_T_s2r_copy_dq = make_fragment_like(tB_sB_q_T_s2r_copy_dq(_,0,0,0));
 
     R2SDQCopy tiled_r2s_copy_dq;
     ThrCopy thr_r2s_copy_dq = tiled_r2s_copy_dq.get_slice(threadIdx.x);
     Tensor tB_sB_T_r2s_copy_dq = thr_r2s_copy_dq.partition_D(sB_T);
-    Tensor tB_rB_T_r2s_copy_dq = make_fragment_like(tB_sB_T_r2s_copy_dq(_,0,0));
+    Tensor tB_rB_T_r2s_copy_dq = make_fragment_like(tB_sB_T_r2s_copy_dq(_,0,0,0));
 
     Tensor id_sB_T = make_identity_tensor(shape(sB_T));
     Tensor tB_id_sB_T_r2s_copy_dq_get_n = thr_r2s_copy_dq.partition_D(id_sB_T);
@@ -460,13 +464,28 @@ __global__ void __launch_bounds__(GEMM_CONGIG::threads) cutlass_gptq_gemm_kernel
     Tensor tC_sB_mma = thr_mma.partition_B(sB_T);
     Tensor tC_sC_mma = thr_mma.partition_C(sC);
 
-    Tensor tC_rA_mma = thr_mma.partition_fragment_A(sA);
-    Tensor tC_rB_mma = thr_mma.partition_fragment_B(sB_T);
+    Tensor tC_rA_mma = thr_mma.partition_fragment_A(sA(_,_,0));
+    Tensor tC_rB_mma = thr_mma.partition_fragment_B(sB_T(_,_,0));
     Tensor tC_rC_mma = thr_mma.partition_fragment_C(sC);
  
     clear(tC_rC_mma);
+    
+    int ikstage_smem_read = 0;
+    int ikstage_smem_write = 0;
+    int ikstage_gmem_read = 0;
+    
+    for(int idx_bK = 0; idx_bK < kStage - 1; idx_bK++) {
+        cute::copy_if(tiled_g2s_copy_A, tA_pA, tA_gA_g2s_copy(_,_,_,ikstage_gmem_read), tA_sA_g2s_copy(_,_,_,ikstage_smem_write));
+        cute::copy(tiled_g2s_copy_B_q_T, tB_gB_q_T_g2s_copy(_,_,_,ikstage_gmem_read), tB_sB_q_T_g2s_copy(_,_,_, ikstage_smem_write));
+        ikstage_gmem_read++;
+        ikstage_smem_write = (ikstage_smem_write + 1) % kStage;
+        cp_async_fence();
+    }
+
+
     int n_bK = size<2>(gA);
     for(int idx_bK = 0; idx_bK < n_bK; idx_bK++) {
+        
         if(idx_bK % n_bK_in_one_group == 0) {
             int idx_group = idx_bK / n_bK_in_one_group;
             Tensor this_group_gB_zeros = gB_zeros(_,_,idx_group);
@@ -480,27 +499,34 @@ __global__ void __launch_bounds__(GEMM_CONGIG::threads) cutlass_gptq_gemm_kernel
             }
         }
         __syncthreads();
-        cute::copy_if(tiled_g2s_copy_A, tA_pA, tA_gA_g2s_copy(_,_,_,idx_bK), tA_sA_g2s_copy);
-        cute::copy(tiled_g2s_copy_B_q_T, tB_gB_q_T_g2s_copy(_,_,_,idx_bK), tB_sB_q_T_g2s_copy);
+        cp_async_wait<kStage - 2>();
         __syncthreads();
-
+        
         for(int idx_dq_N = 0; idx_dq_N < size<1>(tB_sB_q_T_s2r_copy_dq); idx_dq_N++) {              
-            for(int idx_dq_K = 0; idx_dq_K < size<2>(tB_sB_q_T_s2r_copy_dq); idx_dq_K++) {
-                cute::copy(tiled_s2r_copy_dq, tB_sB_q_T_s2r_copy_dq(_, idx_dq_N, idx_dq_K), tB_rB_q_T_s2r_copy_dq);
-                int idx_N_thread = get<0>(tB_id_sB_T_r2s_copy_dq_get_n(0, idx_dq_N, idx_dq_K));
-                uint32_t zero_thread = sB_zeros(idx_N_thread,0);
-                scalar_t scale_thread = sB_scales(idx_N_thread, 0);
-                dq_thread_fn<scalar_t, B_q_dq_layout, bit, q_div, bit_mask>(
-                    tB_rB_q_T_s2r_copy_dq, tB_rB_T_r2s_copy_dq, zero_thread, scale_thread);
-                cute::copy(tiled_r2s_copy_dq, tB_rB_T_r2s_copy_dq, tB_sB_T_r2s_copy_dq(_, idx_dq_N, idx_dq_K));
-            }
-            
+            cute::copy(tiled_s2r_copy_dq, tB_sB_q_T_s2r_copy_dq(_, idx_dq_N, 0, ikstage_smem_read), tB_rB_q_T_s2r_copy_dq);
+            int idx_N_thread = get<0>(tB_id_sB_T_r2s_copy_dq_get_n(0, idx_dq_N, 0, 0));
+            uint32_t zero_thread = sB_zeros(idx_N_thread,0);
+            scalar_t scale_thread = sB_scales(idx_N_thread, 0);
+            dq_thread_fn<scalar_t, B_q_dq_layout, bit, q_div, bit_mask>(
+                tB_rB_q_T_s2r_copy_dq, tB_rB_T_r2s_copy_dq, zero_thread, scale_thread);
+            cute::copy(tiled_r2s_copy_dq, tB_rB_T_r2s_copy_dq, tB_sB_T_r2s_copy_dq(_, idx_dq_N, 0, ikstage_smem_read));
         }
         __syncthreads();
-        cute::copy(tC_sA_mma, tC_rA_mma);
-        cute::copy(tC_sB_mma, tC_rB_mma);
+        cute::copy(tC_sA_mma(_,_,_,ikstage_smem_read), tC_rA_mma);
+        cute::copy(tC_sB_mma(_,_,_,ikstage_smem_read), tC_rB_mma);
+        ikstage_smem_read = (ikstage_smem_read + 1) % kStage;
+
+        if(ikstage_gmem_read < n_bK) {
+            cute::copy_if(tiled_g2s_copy_A, tA_pA, tA_gA_g2s_copy(_,_,_,ikstage_gmem_read), tA_sA_g2s_copy(_,_,_, ikstage_smem_write));
+            cute::copy(tiled_g2s_copy_B_q_T, tB_gB_q_T_g2s_copy(_,_,_,ikstage_gmem_read), tB_sB_q_T_g2s_copy(_,_,_, ikstage_smem_write));
+            ikstage_gmem_read++;
+            ikstage_smem_write = (ikstage_smem_write + 1) % kStage;
+            cp_async_fence();
+        }
+
+
         cute::gemm(tiled_mma, tC_rC_mma, tC_rA_mma, tC_rB_mma, tC_rC_mma);
-        __syncthreads();
+        //__syncthreads();
     }
     
 
@@ -512,6 +538,7 @@ __global__ void __launch_bounds__(GEMM_CONGIG::threads) cutlass_gptq_gemm_kernel
     ThrCopy thr_s2g_copy_C = tiled_s2g_copy_C.get_slice(threadIdx.x);
     Tensor tC_sC_s2g_copy = thr_s2g_copy_C.partition_S(sC);
     Tensor tC_gC_reduce_s2g_copy = thr_s2g_copy_C.partition_D(gC_reduce);
+    Tensor tC_gC_s2g_copy = thr_s2g_copy_C.partition_D(gC);
     Tensor tC_id_gC_s2g_copy = thr_s2g_copy_C.partition_D(id_gC);
     Tensor tC_pC = make_tensor<bool>(make_shape(shape<0>(tC_gC_reduce_s2g_copy), size<1>(tC_gC_reduce_s2g_copy), size<2>(tC_gC_reduce_s2g_copy)),
                                     make_stride(make_stride(Int<0>{}, Int<0>{}), Int<1>{}, Int<0>{}));
@@ -519,8 +546,15 @@ __global__ void __launch_bounds__(GEMM_CONGIG::threads) cutlass_gptq_gemm_kernel
     for(int m = 0; m < size<1>(tC_pC); m++) {
         tC_pC(0, m, 0) = elem_less(get<0>(tC_id_gC_s2g_copy(0,m,0)), shape<0>(mC));
     }
+    if(split_k_slices == 1) {
+        cute::copy_if(tiled_s2g_copy_C, tC_pC, tC_sC_s2g_copy, tC_gC_s2g_copy);
+    } else {
+        cute::copy_if(tiled_s2g_copy_C, tC_pC, tC_sC_s2g_copy, tC_gC_reduce_s2g_copy);
+    }
+    if(split_k_slices == 1) {
+        return;
+    }
 
-    cute::copy_if(tiled_s2g_copy_C, tC_pC, tC_sC_s2g_copy, tC_gC_reduce_s2g_copy);
     __threadfence();
     __syncthreads();
 
@@ -682,7 +716,7 @@ void launch_cutlass_gptq_reduce_kernel(
 
 template<typename scalar_t>
 void run_cutlass_gptq_gemm(GptQ_Kernel_Params<scalar_t> kernel_params, Launch_Kernel_Params launch_kernel_params) {
-    using TEST_GEMM_CONGIG = GPTQ_GemmConfig<scalar_t, M_BLOCK, N_BLOCK, 32, 1, 4, 128>;
+    using TEST_GEMM_CONGIG = GPTQ_GemmConfig<scalar_t, M_BLOCK, N_BLOCK, 32, 2, 4, 128>;
     
     launch_cutlass_gptq_gemm_kernel<TEST_GEMM_CONGIG>(kernel_params, launch_kernel_params);
     //launch_cutlass_gptq_reduce_kernel<TEST_GEMM_CONGIG>(kernel_params, launch_kernel_params);

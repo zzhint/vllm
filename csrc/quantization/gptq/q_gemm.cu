@@ -28,8 +28,8 @@ namespace gptq {
 #define BLOCK_KN_SIZE 128
 #define BLOCK_M_SIZE_MAX 8
 #define MAX_GROUPS_IN_BLOCK (BLOCK_KN_SIZE / 32)
-//#define MAX_Q_GEMM_ROWS 50
-#define MAX_Q_GEMM_ROWS 0
+#define MAX_Q_GEMM_ROWS 50
+//#define MAX_Q_GEMM_ROWS 0
 #define MAX_Q_GEMM_ROWS_8BIT 24
 #define MAX_ALT_GEMM_ROWS 8
 #define THREADS_X 32

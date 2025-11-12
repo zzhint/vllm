@@ -41,7 +41,7 @@ def benchmark_gptq_gemm(
         a_shape, weight_shape, zeros_shape, scales_shape, device
     )
     M, K = a_shape 
-    N, _ = weight_shape  
+    _, N = weight_shape  
     total_ops = 2 * M * N * K  
 
     @perf_report(

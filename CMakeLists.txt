@@ -298,6 +298,12 @@ if(VLLM_GPU_LANG STREQUAL "CUDA")
     "csrc/quantization/fp8/per_token_group_quant.cu"
     "csrc/quantization/gptq/cutlass_gptq_gemm.cu")
 
+  set_source_files_properties(
+    "csrc/quantization/gptq/cutlass_gptq_gemm.cu"
+    PROPERTIES
+    COMPILE_OPTIONS "-lineinfo"
+  )
+
   set_gencode_flags_for_srcs(
     SRCS "${VLLM_EXT_SRC}"
     CUDA_ARCHS "${CUDA_ARCHS}")

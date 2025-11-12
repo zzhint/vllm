@@ -25,7 +25,17 @@ struct alignas(sizeof(scalar_t) * vec_size) aligned_vector {
 static constexpr int M_BLOCK = 64;
 static constexpr int N_BLOCK = 128;
 
+template<typename scalar_t>
+struct MMA_Operator {
+    using mma_op = UniversalFMA<scalar_t,scalar_t,scalar_t>;
+    using thr_layout = Layout<Shape<_16,_8,_1>>;
+};
 
+template<>
+struct MMA_Operator<half> {
+    using mma_op = SM80_16x8x16_F16F16F16F16_TN;
+    using thr_layout = Layout<Shape<_1,_4,_1>>;
+};
 
 template<typename _scalar_t, 
     int _bM, int _bN, int _bK, int _kStage,
@@ -33,19 +43,28 @@ template<typename _scalar_t,
 struct GPTQ_GemmConfig {
     
     using scalar_t = _scalar_t;
-    using mma_op = cute::conditional_t<cute::is_same_v<scalar_t, half>, SM80_16x8x16_F32F16F16F32_TN, SM80_16x8x16_F32BF16BF16F32_TN>;
-    using mma_traits = MMA_Traits<mma_op>;
-    using mma_atom = MMA_Atom<mma_traits>;
-
-    using accscalar_t = typename mma_traits::ValTypeD;
-    static constexpr bool is_acc_type_match = cute::is_same_v<scalar_t, accscalar_t>;
-
     static constexpr int bM = _bM;
     static constexpr int bN = _bN;
     static constexpr int bK = _bK;
     static constexpr int kStage = _kStage;
     static constexpr int bit = _bit;
     static constexpr int group_size = _group_size;
+
+    
+    //using mma_op = cute::conditional_t<cute::is_same_v<scalar_t, half>, SM80_16x8x16_F32F16F16F32_TN, SM80_16x8x16_F32BF16BF16F32_TN>;
+    using mma_op = typename MMA_Operator<scalar_t>::mma_op;
+    using thr_layout = typename MMA_Operator<scalar_t>::thr_layout;
+    using mma_traits = MMA_Traits<mma_op>;
+    using mma_atom = MMA_Atom<mma_traits>;
+
+    static constexpr int aM = 16;
+    static constexpr int aK = 16;
+
+    using TiledMMA = decltype(make_tiled_mma(mma_atom{}, thr_layout{}, Tile<Int<aM>, Int<bN>, Int<aK>>{}));
+    static constexpr int threads = size(TiledMMA{});   
+
+    using accscalar_t = typename mma_traits::ValTypeD;
+    static constexpr bool is_acc_type_match = cute::is_same_v<scalar_t, accscalar_t>;
 
     //how many data in one uint32_t
     static constexpr int q_div = 32 / bit;
@@ -72,13 +91,22 @@ struct GPTQ_GemmConfig {
 
     //using TiledMMA = decltype(make_tiled_mma(UniversalFMA<T,T,T>{},
     //                             Layout<Shape<_16,_8,_1>>{}, Tile<Int<bM>, Int<bN>, Int<bK>>{}));
-    using TiledMMA = decltype(make_tiled_mma(mma_atom{}, Layout<Shape<_1,_4,_1>>{}, Tile<Int<16>, Int<bN>, Int<16>>{}));
-    static constexpr int threads = size(TiledMMA{});
+
     //using CTATiler = Shape<Int<bM>, Int<bN>, Int<bK>>;
 
+/*
     using SmemLayoutA = Layout< Shape<Int<bM>, Int<bK>>, Stride<Int<bK>, Int<1>> >;
     using SmemLayoutB_T = Layout< Shape<Int<bN>, Int<bK>>, Stride<Int<bK>, Int<1>> >;
     using SmemLayoutB_q_T = Layout< Shape<Int<bN>,  Int<bK_q>>, Stride<Int<1>, Int<bN>> >;
+*/
+
+    using SmemLayoutA = Layout<     Shape<Int<bM>, Int<bK>,   Int<kStage>>, 
+                                   Stride<Int<bK>, Int<1>,    Int<bM * bK>>  >;
+    using SmemLayoutB_T = Layout<   Shape<Int<bN>, Int<bK>,   Int<kStage>>, 
+                                   Stride<Int<bK>, Int<1>,    Int<bN * bK>>  >;
+    using SmemLayoutB_q_T = Layout< Shape<Int<bN>, Int<bK_q>, Int<kStage>>, 
+                                   Stride<Int<1>,  Int<bN>,   Int<bN * bK_q>>>;
+
 
     using SmemLayoutB_zeros = Layout<Shape<Int<bN>, Int<bK>>, Stride<Int<1>, Int<0>>>;
     using SmemLayoutB_scales = Layout<Shape<Int<bN>, Int<bK>>, Stride<Int<1>, Int<0>>>;
@@ -89,7 +117,12 @@ struct GPTQ_GemmConfig {
     using vec_copy_scalar_t_atom = Copy_Atom<vec_copy_traits, scalar_t>;
     using vec_copy_uint32_t_atom = Copy_Atom<vec_copy_traits, uint32_t>;
 
-    using g2s_copyA_atom = vec_copy_scalar_t_atom;
+    using vec_async_copy_op = SM80_CP_ASYNC_CACHEGLOBAL<cute::uint128_t>;
+    using vec_async_copy_traits = Copy_Traits<vec_async_copy_op>;
+    using vec_async_copy_scalar_t_atom = Copy_Atom<vec_async_copy_traits, scalar_t>;
+    using vec_async_copy_uint32_t_atom = Copy_Atom<vec_async_copy_traits, uint32_t>;
+
+    using g2s_copyA_atom = vec_async_copy_scalar_t_atom;
 
     static constexpr int vec_scalar_t_copy = sizeof(cute::uint128_t) / sizeof(scalar_t);
     static constexpr int vec_uint32_t_copy = sizeof(cute::uint128_t) / sizeof(uint32_t);
@@ -105,7 +138,7 @@ struct GPTQ_GemmConfig {
     static constexpr int g2s_copyB_N_threads = bN / vec_uint32_t_copy;
     static constexpr int g2s_copyB_K_threads = threads / g2s_copyB_N_threads;
 
-    using g2s_copy_B_q_T_atom = vec_copy_uint32_t_atom;
+    using g2s_copy_B_q_T_atom = vec_async_copy_uint32_t_atom;
     using G2SCopyB_q_T =
         decltype(make_tiled_copy(g2s_copy_B_q_T_atom{},
                                make_layout(make_shape(Int<g2s_copyB_N_threads>{}, Int<g2s_copyB_K_threads>{}),
