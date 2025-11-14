@@ -1887,7 +1887,7 @@ torch::Tensor gptq_gemm_opt(torch::Tensor a, torch::Tensor b_q_weight,
   int N = b_q_weight.size(1);
   int K = a.size(1);
 
-  int split_k_slices = 4;
+  int split_k_slices = 1;
   int l2_tile = 4;
 
   const at::cuda::OptionalCUDAGuard device_guard(device_of(a));
@@ -1920,7 +1920,7 @@ torch::Tensor gptq_gemm_opt(torch::Tensor a, torch::Tensor b_q_weight,
         using GptQ_Kernel_Params_T = cutlass_gptq::GptQ_Kernel_Params<cuda_type>;
         GptQ_Kernel_Params_T kernel_params;
         kernel_params.A_ptr = (const cuda_type*) a.data_ptr();
-        kernel_params.B_q_ptr = (const uint32_t*) b_q_weight.data_ptr();
+        kernel_params.Bq_ptr = (const uint32_t*) b_q_weight.data_ptr();
         kernel_params.B_zeros_ptr = (const uint32_t*) b_gptq_qzeros.data_ptr();
         kernel_params.B_scales_ptr = (const cuda_type*) b_gptq_scales.data_ptr();
         kernel_params.B_g_idx_ptr = b_g_idx.device().is_meta() ? NULL : (const int*)b_g_idx.data_ptr();
