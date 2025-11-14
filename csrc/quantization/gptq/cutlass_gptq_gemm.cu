@@ -498,6 +498,8 @@ __global__ void __launch_bounds__(GEMM_CONGIG::threads) cutlass_gptq_gemm_kernel
     Tensor tB_sB_r2s_dq_copy = thr_r2s_dq_copy.partition_D(sB);
     Tensor tB_rB_r2s_dq_copy = make_fragment_like(tB_sB_r2s_dq_copy(_,_,0,0));
     
+    Bq_dq_layout Bq_dq_map_idx;
+
     int ikstage_smem_read = 0;
     int ikstage_smem_write = 0;
     int ikstage_gmem_read = 0;
@@ -507,16 +509,17 @@ __global__ void __launch_bounds__(GEMM_CONGIG::threads) cutlass_gptq_gemm_kernel
     constexpr int little_k_tile_1 = 1;
     
     for(int idx_bK = 0; idx_bK < kStage - 1; idx_bK++) {
-        cute::copy_if(tiled_g2s_copy_A, tA_pA, tA_gA_g2s_copy(_,_,_,ikstage_gmem_read), tA_sA_g2s_copy(_,_,_,ikstage_smem_write));
         cute::copy(tiled_g2s_copy_Bq, tB_gBq_g2s_copy(_,_,_,ikstage_gmem_read), tB_sBq_g2s_copy(_,_,_,ikstage_smem_write));
+        cp_async_fence();
+        cute::copy_if(tiled_g2s_copy_A, tA_pA, tA_gA_g2s_copy(_,_,_,ikstage_gmem_read), tA_sA_g2s_copy(_,_,_,ikstage_smem_write));
+        cp_async_fence();
         ikstage_gmem_read++;
         ikstage_smem_write = (ikstage_smem_write + 1) % kStage;
-        cp_async_fence();
     }
 
-    cp_async_wait<kStage - 2>();
+    cp_async_wait<2*kStage - 3>();
     __syncthreads();
-    Bq_dq_layout Bq_dq_map_idx;
+    
         
     uint32_t zero_thread = 1;
     scalar_t scale_thread = 1.1;
@@ -531,6 +534,7 @@ __global__ void __launch_bounds__(GEMM_CONGIG::threads) cutlass_gptq_gemm_kernel
         cute::copy(tiled_r2s_dq_copy, tB_rB_r2s_dq_copy, tB_sB_r2s_dq_copy(_,_,idx_dq,ikstage_smem_read));
         
     }
+    cp_async_wait<2*kStage - 4>();
     __syncthreads();
 
     cute::copy(tiled_s2r_copy_A, tC_sA_s2r_copy(_, _, little_k_tile_0, ikstage_smem_read), tC_rA_s2r_copy(_,_,little_k_tile_0));
@@ -552,20 +556,23 @@ __global__ void __launch_bounds__(GEMM_CONGIG::threads) cutlass_gptq_gemm_kernel
 
     for(int idx_bK = 0; idx_bK < n_bK; idx_bK++) {
         if(ikstage_gmem_read < n_bK) {
-            cute::copy_if(tiled_g2s_copy_A, tA_pA, tA_gA_g2s_copy(_,_,_,ikstage_gmem_read), tA_sA_g2s_copy(_,_,_,ikstage_smem_write));
             cute::copy(tiled_g2s_copy_Bq, tB_gBq_g2s_copy(_,_,_,ikstage_gmem_read), tB_sBq_g2s_copy(_,_,_, ikstage_smem_write));
+            cp_async_fence();
+            cute::copy_if(tiled_g2s_copy_A, tA_pA, tA_gA_g2s_copy(_,_,_,ikstage_gmem_read), tA_sA_g2s_copy(_,_,_,ikstage_smem_write));
+            cp_async_fence();
             ikstage_gmem_read++;
             ikstage_smem_write = (ikstage_smem_write + 1) % kStage;
         }
-        cp_async_fence();
+        
 
         cute::copy(tiled_s2r_copy_A, tC_sA_s2r_copy(_,_,little_k_tile_1,ikstage_smem_read), tC_rA_s2r_copy(_,_,little_k_tile_1));
         cute::copy(tiled_s2r_copy_B, tC_sB_s2r_copy(_,_,little_k_tile_1,ikstage_smem_read), tC_rB_s2r_copy(_,_,little_k_tile_1));
 
-        cute::gemm(tiled_mma, tC_rC_mma, tC_rA_mma(_,_,little_k_tile_0), tC_rB_mma(_,_,little_k_tile_0), tC_rC_mma);
-        cute::gemm(tiled_mma, tC_rC_mma, tC_rA_mma(_,_,little_k_tile_1), tC_rB_mma(_,_,little_k_tile_1), tC_rC_mma);
+        cute::gemm(tiled_mma, tC_rC_mma, tC_rA_mma, tC_rB_mma, tC_rC_mma);
+        //cute::gemm(tiled_mma, tC_rC_mma, tC_rA_mma(_,_,little_k_tile_0), tC_rB_mma(_,_,little_k_tile_0), tC_rC_mma);
+        //cute::gemm(tiled_mma, tC_rC_mma, tC_rA_mma(_,_,little_k_tile_1), tC_rB_mma(_,_,little_k_tile_1), tC_rC_mma);
         ikstage_smem_read = (ikstage_smem_read + 1) % kStage;
-        cp_async_wait<kStage - 2>();
+        cp_async_wait<2*kStage - 3>();
         __syncthreads();
 
         
@@ -581,6 +588,7 @@ __global__ void __launch_bounds__(GEMM_CONGIG::threads) cutlass_gptq_gemm_kernel
             cute::copy(tiled_r2s_dq_copy, tB_rB_r2s_dq_copy, tB_sB_r2s_dq_copy(_,_,idx_dq,ikstage_smem_read));
             
         }
+        cp_async_wait<2*kStage - 4>();
         __syncthreads();
         cute::copy(tiled_s2r_copy_A, tC_sA_s2r_copy(_,_,little_k_tile_0,ikstage_smem_read), tC_rA_s2r_copy(_,_,little_k_tile_0));
         cute::copy(tiled_s2r_copy_B, tC_sB_s2r_copy(_,_,little_k_tile_0,ikstage_smem_read), tC_rB_s2r_copy(_,_,little_k_tile_0));
