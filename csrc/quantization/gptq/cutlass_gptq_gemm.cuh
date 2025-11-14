@@ -178,7 +178,7 @@ struct GPTQ_GemmConfig {
     using s2r_dq_copy_atom = Copy_Atom<s2r_dq_copy_traits, uint32_t>;
 
     using STORE_B_T = aligned_vector<scalar_t, q_div>;
-    using r2s_dq_copy_op = UniversalCopy<scalar_t>;
+    using r2s_dq_copy_op = UniversalCopy<STORE_B_T>;
     using r2s_dq_copy_traits = Copy_Traits<r2s_dq_copy_op>;
     using r2s_dq_copy_atom = Copy_Atom<r2s_dq_copy_traits, scalar_t>;
 
