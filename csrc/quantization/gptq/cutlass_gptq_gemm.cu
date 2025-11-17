@@ -497,6 +497,8 @@ __global__ void __launch_bounds__(GEMM_CONGIG::threads) cutlass_gptq_gemm_kernel
     ThrCopy thr_r2s_dq_copy = tiled_r2s_dq_copy.get_slice(threadIdx.x);
     Tensor tB_sB_r2s_dq_copy = thr_r2s_dq_copy.partition_D(sB);
     Tensor tB_rB_r2s_dq_copy = make_fragment_like(tB_sB_r2s_dq_copy(_,_,0,0));
+
+    
     
     Bq_dq_layout Bq_dq_map_idx;
 
@@ -511,98 +513,96 @@ __global__ void __launch_bounds__(GEMM_CONGIG::threads) cutlass_gptq_gemm_kernel
     
     for(int idx_bK = 0; idx_bK < kStage - 1; idx_bK++) {
         cute::copy(tiled_g2s_copy_Bq, tB_gBq_g2s_copy(_,_,_,ikstage_gmem_read), tB_sBq_g2s_copy(_,_,_,ikstage_smem_write));
-        cp_async_fence();
         cute::copy_if(tiled_g2s_copy_A, tA_pA, tA_gA_g2s_copy(_,_,_,ikstage_gmem_read), tA_sA_g2s_copy(_,_,_,ikstage_smem_write));
         cp_async_fence();
         ikstage_gmem_read++;
         ikstage_smem_write = (ikstage_smem_write + 1) % kStage;
     }
 
-    cp_async_wait<2*kStage - 3>();
+    cp_async_wait<kStage - 2>();
     __syncthreads();
     
         
     uint32_t zero_thread = 1;
     scalar_t scale_thread = 1.1;
-    for(int idx_dq = 0; idx_dq < 2; idx_dq++) {
-        cute::copy(tiled_s2r_dq_copy, tB_sBq_s2r_dq_copy(_,_,idx_dq,ikstage_smem_dq_read), tB_rBq_s2r_dq_copy);
-        uint32_t Bq_val_thread = tB_rBq_s2r_dq_copy(0,0);
+
+    cute::copy(tiled_s2r_dq_copy, tB_sBq_s2r_dq_copy(_,_,little_k_tile_0,ikstage_smem_dq_read), tB_rBq_s2r_dq_copy);
+    for(int idx_repeat_for_aK = 0; idx_repeat_for_aK < s2s_dq_copy_repeat_for_aK; idx_repeat_for_aK++) {
+        uint32_t Bq_val_thread = tB_rBq_s2r_dq_copy(idx_repeat_for_aK);
+        int base_idx = idx_repeat_for_aK * q_div;
         for(int idx_q = 0; idx_q < q_div; idx_q++) {
-            tB_rB_r2s_dq_copy(Bq_dq_map_idx(idx_q), 0) = int_to_float<scalar_t>(
+            tB_rB_r2s_dq_copy(base_idx + Bq_dq_map_idx(idx_q)) = int_to_float<scalar_t>(
                 (Bq_val_thread & bit_mask) - zero_thread) * scale_thread;
             Bq_val_thread >>= bit;
         }
-        cute::copy(tiled_r2s_dq_copy, tB_rB_r2s_dq_copy, tB_sB_r2s_dq_copy(_,_,idx_dq,ikstage_smem_dq_read));
-        
     }
-    cp_async_wait<2*kStage - 4>();
+    cute::copy(tiled_r2s_dq_copy, tB_rB_r2s_dq_copy, tB_sB_r2s_dq_copy(_,_,little_k_tile_0,ikstage_smem_dq_read));
     __syncthreads();
 
     cute::copy(tiled_s2r_copy_A, tC_sA_s2r_copy(_, _, little_k_tile_0, ikstage_smem_read), tC_rA_s2r_copy(_,_,little_k_tile_0));
     cute::copy(tiled_s2r_copy_B, tC_sB_s2r_copy(_, _, little_k_tile_0, ikstage_smem_read), tC_rB_s2r_copy(_,_,little_k_tile_0));
 
-    for(int idx_dq = 2; idx_dq < 4; idx_dq++) {
-        cute::copy(tiled_s2r_dq_copy, tB_sBq_s2r_dq_copy(_,_,idx_dq, ikstage_smem_dq_read), tB_rBq_s2r_dq_copy);
-        uint32_t Bq_val_thread = tB_rBq_s2r_dq_copy(0,0);
+    cute::copy(tiled_s2r_dq_copy, tB_sBq_s2r_dq_copy(_,_,little_k_tile_1,ikstage_smem_dq_read), tB_rBq_s2r_dq_copy);
+    for(int idx_repeat_for_aK = 0; idx_repeat_for_aK < s2s_dq_copy_repeat_for_aK; idx_repeat_for_aK++) {
+        uint32_t Bq_val_thread = tB_rBq_s2r_dq_copy(idx_repeat_for_aK);
+        int base_idx = idx_repeat_for_aK * q_div;
         for(int idx_q = 0; idx_q < q_div; idx_q++) {
-            tB_rB_r2s_dq_copy(Bq_dq_map_idx(idx_q), 0) = int_to_float<scalar_t>(
+            tB_rB_r2s_dq_copy(base_idx + Bq_dq_map_idx(idx_q)) = int_to_float<scalar_t>(
                 (Bq_val_thread & bit_mask) - zero_thread) * scale_thread;
             Bq_val_thread >>= bit;
         }
-        cute::copy(tiled_r2s_dq_copy, tB_rB_r2s_dq_copy, tB_sB_r2s_dq_copy(_,_,idx_dq,ikstage_smem_dq_read));
-        
     }
+    cute::copy(tiled_r2s_dq_copy, tB_rB_r2s_dq_copy, tB_sB_r2s_dq_copy(_,_,little_k_tile_1,ikstage_smem_dq_read));
     
     __syncthreads();
 
     for(int idx_bK = 0; idx_bK < n_bK; idx_bK++) {
         if(ikstage_gmem_read < n_bK) {
             cute::copy(tiled_g2s_copy_Bq, tB_gBq_g2s_copy(_,_,_,ikstage_gmem_read), tB_sBq_g2s_copy(_,_,_, ikstage_smem_write));
-            cp_async_fence();
             cute::copy_if(tiled_g2s_copy_A, tA_pA, tA_gA_g2s_copy(_,_,_,ikstage_gmem_read), tA_sA_g2s_copy(_,_,_,ikstage_smem_write));
             cp_async_fence();
             ikstage_gmem_read++;
             ikstage_smem_write = (ikstage_smem_write + 1) % kStage;
         }
         ikstage_smem_dq_read = (ikstage_smem_dq_read + 1) % kStage;
-        cp_async_wait<2*kStage - 3>();
+        cp_async_wait<kStage - 2>();
         __syncthreads();
 
         cute::copy(tiled_s2r_copy_A, tC_sA_s2r_copy(_,_,little_k_tile_1,ikstage_smem_read), tC_rA_s2r_copy(_,_,little_k_tile_1));
         cute::copy(tiled_s2r_copy_B, tC_sB_s2r_copy(_,_,little_k_tile_1,ikstage_smem_read), tC_rB_s2r_copy(_,_,little_k_tile_1));
 
-        for(int idx_dq = 0; idx_dq < 2; idx_dq++) {
-            cute::copy(tiled_s2r_dq_copy, tB_sBq_s2r_dq_copy(_,_,idx_dq,ikstage_smem_dq_read), tB_rBq_s2r_dq_copy);
-            uint32_t Bq_val_thread = tB_rBq_s2r_dq_copy(0,0);
+        cute::copy(tiled_s2r_dq_copy, tB_sBq_s2r_dq_copy(_,_,little_k_tile_0,ikstage_smem_dq_read), tB_rBq_s2r_dq_copy);
+        for(int idx_repeat_for_aK = 0; idx_repeat_for_aK < s2s_dq_copy_repeat_for_aK; idx_repeat_for_aK++) {
+            uint32_t Bq_val_thread = tB_rBq_s2r_dq_copy(idx_repeat_for_aK);
+            int base_idx = idx_repeat_for_aK * q_div;
             for(int idx_q = 0; idx_q < q_div; idx_q++) {
-                tB_rB_r2s_dq_copy(Bq_dq_map_idx(idx_q), 0) = int_to_float<scalar_t>(
+                tB_rB_r2s_dq_copy(base_idx + Bq_dq_map_idx(idx_q)) = int_to_float<scalar_t>(
                     (Bq_val_thread & bit_mask) - zero_thread) * scale_thread;
                 Bq_val_thread >>= bit;
             }
-            cute::copy(tiled_r2s_dq_copy, tB_rB_r2s_dq_copy, tB_sB_r2s_dq_copy(_,_,idx_dq,ikstage_smem_dq_read));
-            
-        } 
+        }
+        cute::copy(tiled_r2s_dq_copy, tB_rB_r2s_dq_copy, tB_sB_r2s_dq_copy(_,_,little_k_tile_0,ikstage_smem_dq_read));
 
         cute::gemm(tiled_mma, tC_rC_mma, tC_rA_mma(_,_,little_k_tile_0), tC_rB_mma(_,_,little_k_tile_0), tC_rC_mma);
         //
         ikstage_smem_read = (ikstage_smem_read + 1) % kStage;
-        cp_async_wait<2*kStage - 4>();
+
         __syncthreads();
 
         cute::copy(tiled_s2r_copy_A, tC_sA_s2r_copy(_,_,little_k_tile_0,ikstage_smem_read), tC_rA_s2r_copy(_,_,little_k_tile_0));
         cute::copy(tiled_s2r_copy_B, tC_sB_s2r_copy(_,_,little_k_tile_0,ikstage_smem_read), tC_rB_s2r_copy(_,_,little_k_tile_0));
 
-        for(int idx_dq = 2; idx_dq < 4; idx_dq++) {
-            cute::copy(tiled_s2r_dq_copy, tB_sBq_s2r_dq_copy(_,_,idx_dq,ikstage_smem_dq_read), tB_rBq_s2r_dq_copy);
-            uint32_t Bq_val_thread = tB_rBq_s2r_dq_copy(0,0);
+        cute::copy(tiled_s2r_dq_copy, tB_sBq_s2r_dq_copy(_,_,little_k_tile_1,ikstage_smem_dq_read), tB_rBq_s2r_dq_copy);
+        for(int idx_repeat_for_aK = 0; idx_repeat_for_aK < s2s_dq_copy_repeat_for_aK; idx_repeat_for_aK++) {
+            uint32_t Bq_val_thread = tB_rBq_s2r_dq_copy(idx_repeat_for_aK);
+            int base_idx = idx_repeat_for_aK * q_div;
             for(int idx_q = 0; idx_q < q_div; idx_q++) {
-                tB_rB_r2s_dq_copy(Bq_dq_map_idx(idx_q), 0) = int_to_float<scalar_t>(
+                tB_rB_r2s_dq_copy(base_idx + Bq_dq_map_idx(idx_q)) = int_to_float<scalar_t>(
                     (Bq_val_thread & bit_mask) - zero_thread) * scale_thread;
                 Bq_val_thread >>= bit;
             }
-            cute::copy(tiled_r2s_dq_copy, tB_rB_r2s_dq_copy, tB_sB_r2s_dq_copy(_,_,idx_dq,ikstage_smem_dq_read));
-            
         }
+        cute::copy(tiled_r2s_dq_copy, tB_rB_r2s_dq_copy, tB_sB_r2s_dq_copy(_,_,little_k_tile_1,ikstage_smem_dq_read));
         cute::gemm(tiled_mma, tC_rC_mma, tC_rA_mma(_,_,little_k_tile_1), tC_rB_mma(_,_,little_k_tile_1), tC_rC_mma);
     }
     

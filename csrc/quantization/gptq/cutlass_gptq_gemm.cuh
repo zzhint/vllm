@@ -189,12 +189,12 @@ struct GPTQ_GemmConfig {
     using S2RDQCopy =  decltype(make_tiled_copy(s2r_dq_copy_atom{},
                                make_layout(make_shape(Int<s2s_dq_copy_N_threads>{}, Int<s2s_dq_copy_K_threads>{}),
                                            make_stride(Int<1>{}, Int<s2s_dq_copy_N_threads>{})),
-                               make_layout(make_shape(Int<1>{}, Int<1>{}))));
+                               make_layout(make_shape(Int<1>{}, Int<s2s_dq_copy_repeat_for_aK>{}))));
 
     using R2SDQCopy = decltype(make_tiled_copy(r2s_dq_copy_atom{},
                                make_layout(make_shape(Int<s2s_dq_copy_N_threads>{}, Int<s2s_dq_copy_K_threads>{}),
                                            make_stride(Int<1>{}, Int<s2s_dq_copy_N_threads>{})),
-                               make_layout(make_shape(Int<1>{}, Int<q_div>{}))));
+                               make_layout(make_shape(Int<1>{}, Int<q_div * s2s_dq_copy_repeat_for_aK>{}))));
 
     using s2g_copy_C_atom = vec_copy_scalar_t_atom;
     static constexpr int s2g_copyC_N_threads = bN / vec_scalar_t_copy;
