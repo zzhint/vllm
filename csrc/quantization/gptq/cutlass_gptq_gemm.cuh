@@ -78,43 +78,21 @@ struct GPTQ_GemmConfig {
 
     //how many data in one uint32_t
     static constexpr int q_div = 32 / bit;
-    static constexpr int bit_mask = (1 << bit) - 1;
-
     static constexpr int bK_q = bK / q_div;
     static constexpr int bN_q = bN / q_div;
     static constexpr int n_bK_in_one_group = group_size / bK;
+
+    static constexpr int bit_mask = (1 << bit) - 1;
+
     
     //smem size
     static constexpr int smem_size_A = bM * bK * kStage * sizeof(scalar_t);
     static constexpr int smem_size_B = bN * bK * kStage * sizeof(scalar_t);
     static constexpr int smem_size_Bq = bN * bK_q * kStage * sizeof(uint32_t);
-    static constexpr int smem_size_B_zeros = bN * sizeof(uint32_t);
-    static constexpr int smem_size_B_scales = bN * sizeof(scalar_t);
     static constexpr int smem_size_C = bM * bN * sizeof(scalar_t);
 
-    static constexpr int smem_size_AB = smem_size_A 
-        + smem_size_B + smem_size_Bq
-        + smem_size_B_zeros + smem_size_B_scales;
-    static constexpr int smem_size = smem_size_C > smem_size_AB 
-            ? smem_size_C : smem_size_AB;
-
-
-    //using TiledMMA = decltype(make_tiled_mma(UniversalFMA<T,T,T>{},
-    //                             Layout<Shape<_16,_8,_1>>{}, Tile<Int<bM>, Int<bN>, Int<bK>>{}));
-
-    //using CTATiler = Shape<Int<bM>, Int<bN>, Int<bK>>;
-
-/*
-    using SmemLayoutA = Layout< Shape<Int<bM>, Int<bK>>, Stride<Int<bK>, Int<1>> >;
-    using SmemLayoutB = Layout< Shape<Int<bN>, Int<bK>>, Stride<Int<bK>, Int<1>> >;
-    using SmemLayoutBq = Layout< Shape<Int<bN>,  Int<bK_q>>, Stride<Int<1>, Int<bN>> >;
-*/
-    using s2r_copy_op = SM75_U32x4_LDSM_N;
-    using s2r_copy_traits = Copy_Traits<s2r_copy_op>;
-    using s2r_copy_atom = Copy_Atom<s2r_copy_traits, scalar_t>;
-
-    using S2RCopyAtomA = s2r_copy_atom;
-    using S2RCopyAtomB = s2r_copy_atom;
+    static constexpr int smem_size_AB = smem_size_A + smem_size_B + smem_size_Bq;
+    static constexpr int smem_size = smem_size_C > smem_size_AB ? smem_size_C : smem_size_AB;
 
     using SmemLayoutAtomAB = decltype(composition(
         Swizzle<3,3,3>{}, Layout<Shape<Int<8>, Int<bK>>, Stride<Int<bK>, Int<1>>>{}));
@@ -122,22 +100,9 @@ struct GPTQ_GemmConfig {
                                         Shape<Int<bM>, Int<bK>, Int<kStage>>{}));
     using SmemLayoutB = decltype(tile_to_shape(SmemLayoutAtomAB{},
                                         Shape<Int<bN>, Int<bK>, Int<kStage>>{}));
-
     using SmemLayoutBq = Layout< Shape<Int<bN>, Int<bK_q>, Int<kStage>>, 
                                    Stride<Int<1>,  Int<bN>,   Int<bN * bK_q>>>;
-    /*
-    
-    using SmemLayoutA = Layout<     Shape<Int<bM>, Int<bK>,   Int<kStage>>, 
-                                   Stride<Int<bK>, Int<1>,    Int<bM * bK>>  >;
-    using SmemLayoutB = Layout<   Shape<Int<bN>, Int<bK>,   Int<kStage>>, 
-                                   Stride<Int<bK>, Int<1>,    Int<bN * bK>>  >;
 
-    
-    */
-
-
-    using SmemLayoutB_zeros = Layout<Shape<Int<bN>, Int<bK>>, Stride<Int<1>, Int<0>>>;
-    using SmemLayoutB_scales = Layout<Shape<Int<bN>, Int<bK>>, Stride<Int<1>, Int<0>>>;
     using SmemLayoutC = Layout< Shape<Int<bM>, Int<bN>>, Stride<Int<bN>, Int<1>> >;
 
     using vec_copy_op = UniversalCopy<cute::uint128_t>;
@@ -150,6 +115,7 @@ struct GPTQ_GemmConfig {
     using vec_async_copy_scalar_t_atom = Copy_Atom<vec_async_copy_traits, scalar_t>;
     using vec_async_copy_uint32_t_atom = Copy_Atom<vec_async_copy_traits, uint32_t>;
 
+    //G2SCopyA
     using g2s_copyA_atom = vec_async_copy_scalar_t_atom;
 
     static constexpr int vec_scalar_t_copy = sizeof(cute::uint128_t) / sizeof(scalar_t);
@@ -157,22 +123,34 @@ struct GPTQ_GemmConfig {
     
     static constexpr int g2s_copyA_K_threads = bK / vec_scalar_t_copy;
     static constexpr int g2s_copyA_M_threads = threads / g2s_copyA_K_threads;
-    using G2SCopyA =
+    
+    using G2SCopyA =  
       decltype(make_tiled_copy(g2s_copyA_atom{},
                                make_layout(make_shape(Int<g2s_copyA_M_threads>{}, Int<g2s_copyA_K_threads>{}),
                                            make_stride(Int<g2s_copyA_K_threads>{}, Int<1>{})),
                                make_layout(make_shape(Int<1>{}, Int<vec_scalar_t_copy>{}))));
 
+    
+    //G2SCopyBq
     static constexpr int g2s_copyB_N_threads = bN / vec_uint32_t_copy;
     static constexpr int g2s_copyB_K_threads = threads / g2s_copyB_N_threads;
 
     using g2s_copy_Bq_atom = vec_async_copy_uint32_t_atom;
-    using G2SCopyBq =
+    using G2SCopyBq = 
         decltype(make_tiled_copy(g2s_copy_Bq_atom{},
                                make_layout(make_shape(Int<g2s_copyB_N_threads>{}, Int<g2s_copyB_K_threads>{}),
                                            make_stride(Int<1>{}, Int<g2s_copyB_N_threads>{})),
                                make_layout(make_shape(Int<vec_uint32_t_copy>{}, Int<1>{}))));
 
+    //S2RCopyAtomA and S2RCopyAtomB
+    using s2r_copy_op = SM75_U32x4_LDSM_N;
+    using s2r_copy_traits = Copy_Traits<s2r_copy_op>;
+    using s2r_copy_atom = Copy_Atom<s2r_copy_traits, scalar_t>;
+
+    using S2RCopyAtomA = s2r_copy_atom; 
+    using S2RCopyAtomB = s2r_copy_atom;
+
+    //dq Bq
     using s2r_dq_copy_op = UniversalCopy<cute::uint32_t>;
     using s2r_dq_copy_traits = Copy_Traits<s2r_dq_copy_op>;
     using s2r_dq_copy_atom = Copy_Atom<s2r_dq_copy_traits, uint32_t>;
@@ -182,35 +160,37 @@ struct GPTQ_GemmConfig {
     using r2s_dq_copy_traits = Copy_Traits<r2s_dq_copy_op>;
     using r2s_dq_copy_atom = Copy_Atom<r2s_dq_copy_traits, scalar_t>;
 
+    static_assert(bN <= threads, "bN <= threads");
     static constexpr int s2s_dq_copy_N_threads = bN;
     static constexpr int s2s_dq_copy_K_threads = threads / s2s_dq_copy_N_threads;
     static constexpr int s2s_dq_copy_repeat_for_aK = aK / (s2s_dq_copy_K_threads * q_div);
 
-    using S2RDQCopy =  decltype(make_tiled_copy(s2r_dq_copy_atom{},
+    //S2RDQCopy
+    using S2RDQCopy = decltype(make_tiled_copy(s2r_dq_copy_atom{},
                                make_layout(make_shape(Int<s2s_dq_copy_N_threads>{}, Int<s2s_dq_copy_K_threads>{}),
                                            make_stride(Int<1>{}, Int<s2s_dq_copy_N_threads>{})),
                                make_layout(make_shape(Int<1>{}, Int<s2s_dq_copy_repeat_for_aK>{}))));
-
+    //R2SDQCopy
     using R2SDQCopy = decltype(make_tiled_copy(r2s_dq_copy_atom{},
                                make_layout(make_shape(Int<s2s_dq_copy_N_threads>{}, Int<s2s_dq_copy_K_threads>{}),
                                            make_stride(Int<1>{}, Int<s2s_dq_copy_N_threads>{})),
                                make_layout(make_shape(Int<1>{}, Int<q_div * s2s_dq_copy_repeat_for_aK>{}))));
+    
+    //0 2 4 6 1 3 5 7 temp dq layout
+    using Bq_dq_layout = Layout<Shape<Shape<_4, _2>, _1>, Stride<Stride<_2, _1>, _1>>; 
 
+    
+    //store C
     using s2g_copy_C_atom = vec_copy_scalar_t_atom;
     static constexpr int s2g_copyC_N_threads = bN / vec_scalar_t_copy;
     static constexpr int s2g_copyC_M_threads = threads / s2g_copyC_N_threads;
 
+    //S2GCopyC
     using S2GCopyC =   decltype(make_tiled_copy(s2g_copy_C_atom{},
                                make_layout(make_shape(Int<s2g_copyC_M_threads>{}, Int<s2g_copyC_N_threads>{}),
                                            make_stride(Int<s2g_copyC_N_threads>{}, Int<1>{})),
                                make_layout(make_shape(Int<1>{}, Int<vec_scalar_t_copy>{}))));
-
-    //0 2 4 6 1 3 5 7
-    using Bq_dq_layout = Layout<Shape<Shape<_4, _2>, _1>, Stride<Stride<_2, _1>, _1>>; 
-
-    using reduce_g2g_copy_atom = vec_copy_scalar_t_atom;
     using ReduceG2GCopyC = S2GCopyC;
-
 
 };
 
