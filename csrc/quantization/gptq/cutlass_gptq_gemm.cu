@@ -614,13 +614,29 @@ __global__ void __launch_bounds__(GEMM_CONGIG::threads) cutlass_gptq_gemm_kernel
         cute::gemm(tiled_mma, tC_rC_mma, tC_rA_mma(_,_,little_k_tile_1), tC_rB_mma(_,_,little_k_tile_1), tC_rC_mma);
 
         //get zero and scale
-        if((idx_bK + 1) % n_bK_in_one_group == 0) {
-            int idx_group        = (idx_bK + 1) / n_bK_in_one_group;
+        if((idx_bK + 2) % n_bK_in_one_group == 0 && idx_bK + 2 != n_bK) {
+            int idx_group        = (idx_bK + 2) / n_bK_in_one_group;
             uint32_t zeros_val_q = gB_zeros(thread_dq_N_idx_for_zeroq,0,idx_group);
             scale_thread         = gB_scales(thread_dq_N,0,idx_group);            
             zeros_val_q          = (zeros_val_q >> bit_offset) & bit_mask;
             zero_thread          = zeros_val_q + 1;
         }
+        /*
+        if(thread0() && block0()) {
+            printf("\nsB bK %d\n", idx_bK);
+            int ok_dq_idx = (ikstage_smem_dq_read - 1 + kStage) % kStage;
+            for(int i = 0; i<size<0>(sB); i++) {
+                for(int j=0; j<size<1>(sB); j++) {
+                    scalar_t val = sB(i,j,ok_dq_idx);
+                    float val_float = static_cast<float>(val);
+                    printf("(%4d, %4d): %8.2f  ",i,j,val_float);
+                }
+                printf("\n");
+            }
+            printf("\n");
+            printf("sB end\n");
+        }
+        __syncthreads();*/
     }
 
     cute::copy(tC_rC_mma, tC_sC_mma);

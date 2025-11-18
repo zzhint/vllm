@@ -1482,11 +1482,11 @@ void reconstruct_gptq(const uint32_t* b_q_weight, const uint32_t* b_gptq_qzeros,
                                            b_gptq_qzeros, b_g_idx, height,
                                            width, groups, out);
 }
-
+/*
 void print_dq(const  half* temp_dq, int size_k, int size_n) {
   half* h_data = new half[size_k * size_n];
   cudaMemcpy(h_data, temp_dq, size_k * size_n * sizeof(half), cudaMemcpyDeviceToHost);
-
+  printf("\n");
   printf("K N \n");
   for(int i=0; i<size_k; i++) {
     for(int j=0; j<size_n;j++) {
@@ -1507,13 +1507,47 @@ void print_dq(const  half* temp_dq, int size_k, int size_n) {
     }
     printf("\n");
   }
-  printf("\n");
+  printf("print dq ok\n");
   printf("\n");
 
 
   delete[] h_data;
 
 
+}*/
+
+
+void print_dq(const half* temp_dq, int size_k, int size_n) {
+    half* h_data = new half[size_k * size_n];
+    cudaMemcpy(h_data, temp_dq, size_k * size_n * sizeof(half), cudaMemcpyDeviceToHost);
+    
+    printf("\n");
+    printf("K x N (行索引, 列索引): 值\n");
+    for(int i = 0; i < size_k; i++) {
+        for(int j = 0; j < size_n; j++) {
+            half val = h_data[i * size_n + j];
+            float val_float = static_cast<float>(val);
+            // 索引用%4d（占4位，右对齐），数值用%8.2f（总宽8位，小数2位）
+            printf("(%4d, %4d): %8.2f  ", i, j, val_float);
+        }
+        printf("\n");
+    }
+    printf("\n");
+
+    printf("N x K (行索引, 列索引): 值\n");
+    for(int i = 0; i < size_n; i++) {
+        for(int j = 0; j < size_k; j++) {
+            half val = h_data[i + j * size_n];
+            float val_float = static_cast<float>(val);
+            // 统一格式：索引占4位，数值占8位（含小数点和小数部分）
+            printf("(%4d, %4d): %8.2f  ", i, j, val_float);
+        }
+        printf("\n");
+    }
+    printf("print dq ok\n");
+    printf("\n");
+
+    delete[] h_data;
 }
 
 void gemm_half_q_half_cuda(cublasHandle_t cublas_handle, const half* a,
@@ -1888,7 +1922,7 @@ torch::Tensor gptq_gemm_opt(torch::Tensor a, torch::Tensor b_q_weight,
   int K = a.size(1);
 
   int split_k_slices = 1;
-  int l2_tile = 4;
+  int l2_tile = 1;
 
   const at::cuda::OptionalCUDAGuard device_guard(device_of(a));
   auto options = torch::TensorOptions().dtype(a.dtype()).device(a.device());

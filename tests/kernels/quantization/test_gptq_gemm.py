@@ -2,17 +2,17 @@ import torch
 import pytest
 from torch.testing import assert_close
 '''
-m=17
+m=1024
 n=4096
-k=4096
+k=1024
 TEST_CASES = [
     ((m, k), (k//8, n), (k // 128, n // 8), (k // 128, n), 4, True)
 ]
 
-'''
 
 
-'''
+
+
 
 
 
